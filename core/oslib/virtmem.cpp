@@ -15,7 +15,7 @@
 
     You should have received a copy of the GNU General Public License
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
- */
+*/
 #include "virtmem.h"
 
 // The host-provided JIT memory allocator, if any. Lives here rather than in one
@@ -33,11 +33,13 @@ void setJitAllocator(JitAllocator alloc, JitDeallocator dealloc)
 	jitDeallocator = dealloc;
 }
 
-JitAllocator getJitAllocator() {
+JitAllocator getJitAllocator()
+{
 	return jitAllocator;
 }
 
-JitDeallocator getJitDeallocator() {
+JitDeallocator getJitDeallocator()
+{
 	return jitDeallocator;
 }
 

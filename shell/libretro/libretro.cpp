@@ -321,12 +321,7 @@ static void retro_keyboard_event(bool down, unsigned keycode, uint32_t character
 // it plays.
 #if defined(FEAT_HOST_JIT_MEMORY) \
 	&& (FEAT_SHREC != DYNAREC_NONE || FEAT_AREC != DYNAREC_NONE || FEAT_DSPREC != DYNAREC_NONE)
-#define USE_FRONTEND_EXEC_MEM 1
-
-// Whether the recompilers have anywhere to put their code. False means every one
-// of them is running its interpreter, which is more than config::DynarecEnabled
-// says: that option is the SH4's alone.
-static bool jitMemoryAvailable = true;
+#define USE_FRONTEND_EXEC_MEM
 
 static void execMemFree(void *rx)
 {
@@ -393,13 +388,14 @@ static void configureJitMemory()
 	}
 	// Nothing usable on offer — no executable memory at all, or only the RWX /
 	// WX_TOGGLE shapes, which this core does not implement. Install the allocator
-	// anyway so that every prepare_jit_block() asks the frontend and fails,
-	// rather than mapping pages we would not be allowed to branch into, and each
-	// recompiler falls back to its interpreter.
+	// anyway, so that every prepare_jit_block() asks the frontend rather than
+	// mapping pages we would not be allowed to branch into. What each recompiler
+	// then does is its own decision, taken when it asks: this probe is only the
+	// answer at init, and a frontend can have memory later that it had not a
+	// moment ago (a debugger attaching after launch is the whole reason env 83
+	// exists).
 	virtmem::setJitAllocator(execMemAlloc, execMemFree);
-	config::DynarecEnabled.override(false);
-	jitMemoryAvailable = false;
-	NOTICE_LOG(DYNAREC, "EXEC_MEM unavailable (mode %u). Running the SH4, ARM7 and DSP interpreters", mode);
+	NOTICE_LOG(DYNAREC, "EXEC_MEM unavailable (mode %u). The recompilers will fall back to their interpreters", mode);
 }
 #endif
 
@@ -2198,10 +2194,12 @@ static bool set_dx11_hw_render()
 bool retro_load_game(const struct retro_game_info *game)
 {
 #ifdef USE_FRONTEND_EXEC_MEM
-	// retro_init() decided this, and it does not change while the core is
-	// loaded. Loading a game is never refused for want of a JIT: without one the
-	// interpreters run instead.
-	if (!jitMemoryAvailable)
+	// Loading a game is never refused for want of a JIT: without one the
+	// interpreters run instead, which is worth saying out loud because it is the
+	// difference the player will feel. Sh4Recompiler::Init() settled this at
+	// retro_init() and it is the SH4's answer alone; the ARM7 and the AICA DSP
+	// decide the same way, independently, and log what they decided.
+	if (!config::DynarecEnabled)
 		os_notify("No JIT available: running interpreted", 5000);
 #endif
 

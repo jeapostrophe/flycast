@@ -48,9 +48,7 @@ static void JITWriteProtect(bool enable)
 {
 #ifdef FEAT_NO_RWX_PAGES
     if (recompiler::rx_offset != 0)
-    	// Dual-mapped: ICache is the r-w alias and is never executed, so its
-    	// protection never changes. A zero offset means we fell back to a single
-    	// r-w-x mapping, which does still need the toggle.
+    	// Dual-mapped: ICache is never executed (see virtmem.h).
     	return;
 #endif
     if (enable)

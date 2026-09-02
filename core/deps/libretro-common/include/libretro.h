@@ -1879,7 +1879,6 @@ struct retro_exec_mem_free
 #endif /* RETRO_ENVIRONMENT_EXEC_MEM_ALLOC */
 
 
-
 /* VFS functionality */
 
 /* File paths:

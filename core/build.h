@@ -69,10 +69,11 @@
 // device with SPTM/TXM will not execute a page the process mapped for itself,
 // so that is the only shape of JIT memory available there.
 //
-// One condition, one macro: FEAT_HOST_JIT_MEMORY is what makes the shell
-// install virtmem::setJitAllocator(), FEAT_NO_RWX_PAGES is what makes the
-// recompilers write through one address and execute at another, and the two
-// must never disagree about which builds they apply to.
+// The two macros come off one condition on purpose: FEAT_HOST_JIT_MEMORY is what
+// makes the shell install virtmem::setJitAllocator(), FEAT_NO_RWX_PAGES is what
+// makes the recompilers write through one address and execute at another, and
+// they must never disagree about which builds they apply to. The shell narrows
+// FEAT_HOST_JIT_MEMORY further, to builds that contain a recompiler at all.
 #if defined(TARGET_IPHONE) && defined(LIBRETRO)
 #define FEAT_HOST_JIT_MEMORY
 #define FEAT_NO_RWX_PAGES

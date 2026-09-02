@@ -33,7 +33,8 @@ void destroy();
 // prepare_jit_block() maps nothing itself and returns false when the host has
 // none to give, so that each recompiler falls back to its interpreter rather
 // than emitting code it may not branch into. Only the two-address-space
-// (FEAT_NO_RWX_PAGES) overload can use it.
+// (FEAT_NO_RWX_PAGES) overload can use it, and only the POSIX backend honours
+// it today — win_vmem and libnx_vmem ignore an installed allocator.
 using JitAllocator = bool (*)(size_t size, void **rx, void **rw);
 using JitDeallocator = void (*)(void *rx);
 void setJitAllocator(JitAllocator alloc, JitDeallocator dealloc);
@@ -47,6 +48,12 @@ JitDeallocator getJitDeallocator();
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rwx);
 // Same as above but uses two address spaces one with RX and RW protections.
 // Note: this function doesnt have to be implemented, it's a fallback for the above one.
+//
+// A ZERO rx_offset is meaningful and must be handled: it means only one mapping
+// could be had, so the r-w address is also the r-x one. CC_RW2RX/CC_RX2RW are
+// then the identity, and code the recompiler writes through it becomes
+// executable at once — which is why a caller that toggles W^X protection must
+// still do so at a zero offset, and must not at a non-zero one.
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdiff_t *rx_offset);
 // This might not need an implementation (ie x86/64 cpus).
 void flush_cache(void *icache_start, void *icache_end, void *dcache_start, void *dcache_end);

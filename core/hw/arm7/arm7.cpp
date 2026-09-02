@@ -90,11 +90,13 @@ void interpreterRun(u32 samples)
 }
 
 #if FEAT_AREC == DYNAREC_NONE
-void avoidRaceCondition() {
+void avoidRaceCondition()
+{
 	interpreterAvoidRaceCondition();
 }
 
-void run(u32 samples) {
+void run(u32 samples)
+{
 	interpreterRun(samples);
 }
 #endif

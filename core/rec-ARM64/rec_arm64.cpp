@@ -79,9 +79,7 @@ static void jitWriteProtect(Sh4CodeBuffer &codeBuffer, bool enable)
 {
 #ifdef FEAT_NO_RWX_PAGES
     if (cc_rx_offset != 0)
-    	// Dual-mapped: the buffer we write through is never executable, so its
-    	// protection never changes. A zero offset means we fell back to a single
-    	// r-w-x mapping, which does still need the toggle.
+    	// Dual-mapped: the buffer we write through is never executed (see virtmem.h).
     	return;
 #endif
 #ifdef TARGET_IPHONE

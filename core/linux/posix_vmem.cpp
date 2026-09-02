@@ -340,9 +340,10 @@ bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdif
 	// Two address spaces over the same pages are not always to be had: there may
 	// be no static code area to put the RX half on, or no shared memory. A single
 	// r-w-x mapping is the degenerate case of the same thing — at a zero offset
-	// CC_RW2RX/CC_RX2RW are the identity — so fall back to it rather than denying
-	// the recompilers any memory at all. This is what a FEAT_NO_RWX_PAGES build
-	// gets on a host that has no objection to r-w-x pages.
+	// CC_RW2RX/CC_RX2RW are the identity — so fall back to the single-mapping
+	// overload rather than denying the recompilers any memory at all. This is
+	// what a FEAT_NO_RWX_PAGES build gets on a host with no objection to r-w-x
+	// pages.
 	if (!prepare_jit_block(code_area, size, code_area_rw))
 		return false;
 	*rx_offset = 0;
@@ -359,8 +360,9 @@ void release_jit_block(void *code_area1, void *code_area2, size_t size)
 	}
 	if (code_area1 == code_area2)
 	{
-		// Degenerate single r-w-x mapping (see prepare_jit_block). The caller
-		// has already checked it is not the statically allocated code area.
+		// Degenerate single r-w-x mapping (see prepare_jit_block). Unmapping it
+		// would be wrong if it were the static code area, which is why the
+		// callers that have one check for that before calling.
 		munmap(code_area1, size);
 		return;
 	}
