@@ -102,8 +102,12 @@ void OITPipelineManager::CreatePipeline(u32 listType, bool autosort, const PolyP
 	// Color flags and blending
 	vk::PipelineColorBlendAttachmentState pipelineColorBlendAttachmentState;
 	vk::ColorComponentFlags colorComponentFlags(vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA);
-	// Apparently punch-through polys support blending, or at least some combinations
-	if (listType == ListType_Punch_Through || pass == Pass::Color)
+	// Apparently punch-through polys support blending, or at least some combinations.
+	// The depth pass never writes color: its fragment shader declares FragColor and
+	// never assigns it, so a full write mask there would blend an undefined value
+	// into the OP+PT color attachment (what the validation layer reports as
+	// Undefined-Value-OutputNotWritten, and what a TBDR can turn into garbage).
+	if (pass != Pass::Depth && (listType == ListType_Punch_Through || pass == Pass::Color))
 	{
 		u32 src = pp.tsp.SrcInstr;
 		u32 dst = pp.tsp.DstInstr;
