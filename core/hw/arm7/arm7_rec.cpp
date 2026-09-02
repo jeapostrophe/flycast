@@ -664,6 +664,9 @@ void compile()
 
 void flush()
 {
+	if (ICache == nullptr)
+		// No executable memory: the interpreter is running instead.
+		return;
 	icPtr = ICache;
 	arm7backend_flush();
 	verify(arm_compilecode != nullptr);
@@ -678,7 +681,14 @@ void init()
 #else
 	bool rc = virtmem::prepare_jit_block(ARM7_TCB, ICacheSize, (void**)&ICache);
 #endif
-	verify(rc);
+	if (!rc || ICache == nullptr)
+	{
+		// The host has no executable memory to give (virtmem::setJitAllocator).
+		// run() then uses the ARM7 interpreter for this session.
+		WARN_LOG(AICA_ARM, "Cannot get executable memory for the ARM7 recompiler. Using the interpreter");
+		ICache = nullptr;
+		return;
+	}
 
 	flush();
 }
@@ -742,6 +752,11 @@ void *getMemOp(bool Load, bool Byte)
 
 void run(u32 samples)
 {
+	if (recompiler::ICache == nullptr)
+	{
+		interpreterRun(samples);
+		return;
+	}
 	for (u32 i = 0; i < samples; i++)
 	{
 		if (Arm7Enabled)
@@ -755,6 +770,11 @@ void run(u32 samples)
 
 void avoidRaceCondition()
 {
+	if (recompiler::ICache == nullptr)
+	{
+		interpreterAvoidRaceCondition();
+		return;
+	}
 	arm_Reg[CYCL_CNT].I = std::max((int)arm_Reg[CYCL_CNT].I, 50);
 }
 

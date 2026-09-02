@@ -11,6 +11,11 @@ void run(u32 samples);
 void enable(bool enabled);
 // Called when the arm interrupts the SH4 to make sure it has enough cycles to finish what it's doing.
 void avoidRaceCondition();
+// The interpreter, used directly by run()/avoidRaceCondition() when no recompiler
+// is compiled in, and as the recompiler's fallback when the host gives it no
+// executable memory.
+void interpreterRun(u32 samples);
+void interpreterAvoidRaceCondition();
 
 enum Arm7Reg
 {

@@ -46,10 +46,16 @@ static Arm64UnwindInfo unwinder;
 #ifdef TARGET_IPHONE
 static void JITWriteProtect(bool enable)
 {
+#ifndef FEAT_NO_RWX_PAGES
     if (enable)
     	virtmem::region_set_exec(recompiler::ICache, recompiler::ICacheSize);
     else
     	virtmem::region_unlock(recompiler::ICache, recompiler::ICacheSize);
+#else
+    // Dual-mapped: ICache is the r-w alias and is never executed, so its
+    // protection never changes.
+    (void)enable;
+#endif
 }
 #endif
 

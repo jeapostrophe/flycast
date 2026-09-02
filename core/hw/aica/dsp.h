@@ -67,6 +67,9 @@ void recInit();
 void recTerm();
 void runStep();
 void recompile();
+// The DSP interpreter. runStep() is it when no recompiler is built in, and
+// falls back to it when the recompiler got no executable memory.
+void interpStep();
 
 struct Instruction
 {

@@ -54,8 +54,9 @@ static void CPUUndefinedException();
 //
 int arm7ClockTicks;
 
-#if FEAT_AREC == DYNAREC_NONE
-
+// The interpreter is compiled in even when a recompiler is available: it is
+// what aica::arm::run() falls back to when the host gives the recompiler no
+// executable memory (see recompiler::init()).
 static void runInterpreter(u32 CycleCount)
 {
 	if (!Arm7Enabled)
@@ -74,18 +75,27 @@ static void runInterpreter(u32 CycleCount)
 	}
 }
 
-void avoidRaceCondition()
+void interpreterAvoidRaceCondition()
 {
 	arm7ClockTicks = std::min(arm7ClockTicks, -50);
 }
 
-void run(u32 samples)
+void interpreterRun(u32 samples)
 {
 	for (u32 i = 0; i < samples; i++)
 	{
 		runInterpreter(ARM_CYCLES_PER_SAMPLE);
 		timeStep();
 	}
+}
+
+#if FEAT_AREC == DYNAREC_NONE
+void avoidRaceCondition() {
+	interpreterAvoidRaceCondition();
+}
+
+void run(u32 samples) {
+	interpreterRun(samples);
 }
 #endif
 

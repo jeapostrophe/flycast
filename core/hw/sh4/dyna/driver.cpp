@@ -12,6 +12,7 @@
 #include "ngen.h"
 #include "decoder.h"
 #include "oslib/virtmem.h"
+#include "cfg/option.h"
 
 #if FEAT_SHREC != DYNAREC_NONE
 
@@ -365,9 +366,17 @@ void Sh4Recompiler::Init()
 #else
 	bool rc = virtmem::prepare_jit_block(SH4_TCB, FULL_SIZE, (void**)&CodeCache);
 #endif
-	verify(rc);
-	// Ensure the pointer returned is non-null
-	verify(CodeCache != nullptr);
+	if (!rc || CodeCache == nullptr)
+	{
+		// The host has no executable memory to give (virtmem::setJitAllocator).
+		// Emitting code we may not branch into would crash, so run the
+		// interpreter for this session: getSh4Executor() returns it as soon as
+		// DynarecEnabled is false.
+		WARN_LOG(DYNAREC, "Cannot get executable memory for the SH4 recompiler. Using the interpreter");
+		CodeCache = nullptr;
+		config::DynarecEnabled.override(false);
+		return;
+	}
 
 	TempCodeCache = CodeCache + CODE_SIZE;
 	sh4Dynarec->init(*getContext(), codeBuffer);

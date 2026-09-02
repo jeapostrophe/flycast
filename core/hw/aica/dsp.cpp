@@ -104,6 +104,10 @@ void recTerm() {
 
 void recompile() {
 }
+
+void runStep() {
+	interpStep();
+}
 #endif
 
 void init()

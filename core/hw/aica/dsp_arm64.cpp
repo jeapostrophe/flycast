@@ -58,10 +58,14 @@ static ptrdiff_t rx_offset;
 
 static void JITWriteProtect(bool enable)
 {
+#ifndef FEAT_NO_RWX_PAGES
     if (enable)
     	virtmem::region_set_exec(pCodeBuffer, CodeSize);
     else
     	virtmem::region_unlock(pCodeBuffer, CodeSize);
+#endif
+    // Dual-mapped: pCodeBuffer is the r-w alias and is never executed, so its
+    // protection never changes.
 }
 #endif
 
@@ -447,6 +451,9 @@ private:
 
 void recompile()
 {
+	if (pCodeBuffer == nullptr)
+		// No executable memory: the interpreter is running instead.
+		return;
 	JITWriteProtect(false);
 	DSPAssembler assembler(pCodeBuffer, CodeSize);
 	assembler.Compile(&state);
@@ -460,18 +467,30 @@ void recInit()
 #else
 	bool rc = virtmem::prepare_jit_block(DynCode, CodeSize, (void**)&pCodeBuffer);
 #endif
-	verify(rc);
+	if (!rc || pCodeBuffer == nullptr)
+	{
+		// The host has no executable memory to give (virtmem::setJitAllocator).
+		// runStep() then uses the DSP interpreter for this session.
+		WARN_LOG(AICA, "Cannot get executable memory for the DSP recompiler. Using the interpreter");
+		pCodeBuffer = nullptr;
+		return;
+	}
 #if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
+	// Platforms where DynCode is a pointer rather than a static .text buffer:
+	// prepare_jit_block() picked the address, so publish it here.
+#ifdef FEAT_NO_RWX_PAGES
+	// pCodeBuffer is the r-w alias we assemble through; DynCode is the r-x
+	// alias we branch into.
+	DynCode = pCodeBuffer + rx_offset;
+#else
 	DynCode = pCodeBuffer;
+#endif
 #endif
 }
 
 
 void recTerm()
 {
-#if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
-	DynCode = nullptr;
-#endif
 #ifdef FEAT_NO_RWX_PAGES
 	if (pCodeBuffer != nullptr)
 		virtmem::release_jit_block(DynCode, pCodeBuffer, CodeSize);
@@ -479,11 +498,19 @@ void recTerm()
 	if (pCodeBuffer != nullptr && pCodeBuffer != DynCode)
 		virtmem::release_jit_block(pCodeBuffer, CodeSize);
 #endif
+#if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
+	DynCode = nullptr;
+#endif
 	pCodeBuffer = nullptr;
 }
 
 void runStep()
 {
+	if (pCodeBuffer == nullptr)
+	{
+		interpStep();
+		return;
+	}
 	((void (*)())DynCode)();
 }
 

@@ -7,8 +7,8 @@
 
 #include "build.h"
 
-#if FEAT_DSPREC != DYNAREC_JIT
-
+// Always compiled: this is what runStep() falls back to when a recompiler is
+// built in but the host gives it no executable memory (see dsp::recInit()).
 #include "dsp.h"
 #include "aica.h"
 #include "aica_if.h"
@@ -19,7 +19,7 @@ namespace aica
 namespace dsp
 {
 
-void runStep()
+void interpStep()
 {
 	if (state.stopped)
 		return;
@@ -219,4 +219,3 @@ void runStep()
 
 } // namespace dsp
 } // namespace aica
-#endif
