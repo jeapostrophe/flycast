@@ -21,6 +21,27 @@ void ondemand_page(void *address, unsigned size_bytes);
 void create_mappings(const Mapping *vmem_maps, unsigned nummaps);
 // Just tries to wipe as much as possible in the relevant area.
 void destroy();
+// A host-provided source of executable memory, installed by the shell.
+//
+// Some hosts will not let a process execute pages it mapped itself: only memory
+// the host prepared for it will run. An iOS 26 device with SPTM/TXM is one, and
+// libretro's RETRO_ENVIRONMENT_EXEC_MEM_ALLOC is how a frontend hands such
+// memory to a core. alloc() returns two mappings of the same physical pages: rx
+// to execute from, rw to write through.
+//
+// While an allocator is installed it is the ONLY source of JIT memory:
+// prepare_jit_block() maps nothing itself and returns false when the host has
+// none to give, so that each recompiler falls back to its interpreter rather
+// than emitting code it may not branch into. Only the two-address-space
+// (FEAT_NO_RWX_PAGES) overload can use it.
+using JitAllocator = bool (*)(size_t size, void **rx, void **rw);
+using JitDeallocator = void (*)(void *rx);
+void setJitAllocator(JitAllocator alloc, JitDeallocator dealloc);
+// The installed allocator, or nullptr.
+JitAllocator getJitAllocator();
+// The installed deallocator, or nullptr.
+JitDeallocator getJitDeallocator();
+
 // Given a block of data in the .text section, prepares it for JIT action.
 // both code_area and size are page aligned. Returns success.
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rwx);

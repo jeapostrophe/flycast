@@ -290,6 +290,24 @@ void release_jit_block(void *code_area, size_t size)
 // Use two addr spaces: need to remap something twice, therefore use allocate_shared_filemem()
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdiff_t *rx_offset)
 {
+	JitAllocator allocator = getJitAllocator();
+	if (allocator != nullptr)
+	{
+		// The host owns executable memory here (see setJitAllocator). Never map
+		// our own as a fallback: on a host that installs an allocator, pages we
+		// mapped ourselves are exactly the ones we may not execute.
+		void *ptr_rx = nullptr;
+		void *ptr_rw = nullptr;
+		if (!allocator(size, &ptr_rx, &ptr_rw))
+		{
+			WARN_LOG(DYNAREC, "Host has no executable memory for %zd bytes", size);
+			return false;
+		}
+		*code_area_rw = ptr_rw;
+		*rx_offset = (char *)ptr_rx - (char *)ptr_rw;
+		INFO_LOG(DYNAREC, "Info: Using host NO_RWX mode, rx ptr: %p, rw ptr: %p, offset: %ld", ptr_rx, ptr_rw, (long)*rx_offset);
+		return true;
+	}
 	int fd = allocate_shared_filemem(size);
 	if (fd < 0)
 		return false;
@@ -320,6 +338,13 @@ bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdif
 
 void release_jit_block(void *code_area1, void *code_area2, size_t size)
 {
+	JitDeallocator deallocator = getJitDeallocator();
+	if (deallocator != nullptr)
+	{
+		// Either alias identifies the block to the host.
+		deallocator(code_area1 != nullptr ? code_area1 : code_area2);
+		return;
+	}
 	// keep code_area1 (RX) mapped since it's statically allocated
 	munmap(code_area2, size);
 }

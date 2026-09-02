@@ -1240,6 +1240,7 @@ target_sources(${PROJECT_NAME} PRIVATE
 		core/oslib/storage.cpp
 		core/oslib/storage.h
 		core/oslib/unwind_info.h
+		core/oslib/virtmem.cpp
 		core/oslib/virtmem.h
 		core/lua/lua.cpp
 		core/lua/lua.h)
