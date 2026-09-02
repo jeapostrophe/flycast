@@ -191,6 +191,7 @@ private:
 	bool checkStatus(bool wait = false);
 	void runInternal();
 	void diskChange();
+	void retryRecompilers();
 
 	enum State {
 		Uninitialized = 0,

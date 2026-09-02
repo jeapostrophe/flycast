@@ -684,7 +684,8 @@ void init()
 	if (!rc || ICache == nullptr)
 	{
 		// The host has no executable memory to give (virtmem::setJitAllocator).
-		// run() then uses the ARM7 interpreter for this session.
+		// run() then uses the ARM7 interpreter instead — until
+		// Emulator::retryRecompilers() asks again, at the next game load.
 		WARN_LOG(AICA_ARM, "Cannot get executable memory for the ARM7 recompiler. Using the interpreter");
 		ICache = nullptr;
 		return;

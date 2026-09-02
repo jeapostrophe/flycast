@@ -140,6 +140,9 @@ public:
 	void Reset(bool hard) override;
 	void Init() override;
 	void Term() override;
+	// Whether Init() got executable memory. False means the interpreter is
+	// running in this recompiler's place.
+	bool hasCodeCache() const;
 
 	void clear_temp_cache(bool full);
 

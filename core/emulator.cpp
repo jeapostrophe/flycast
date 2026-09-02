@@ -510,6 +510,62 @@ void Emulator::init()
 	state = Init;
 }
 
+// A recompiler with no code cache is running its interpreter, because its Init()
+// was told there was no executable memory — and that answer can change while the
+// process runs, a debugger attaching after launch being the whole reason
+// virtmem::setJitAllocator() exists. So ask again, once per game load; one that
+// has a cache is left alone, since it is executing from those pages.
+//
+// loadGame() is that point: the machine is initialised, the address space just
+// mapped, the options just read and no game loaded yet, which is what a
+// recompiler's Init() needs — and the only such point on a host where init()
+// itself runs once per process (Apple, Linux: see retro_init()).
+void Emulator::retryRecompilers()
+{
+#if FEAT_SHREC != DYNAREC_NONE
+	Sh4Recompiler *sh4rec = static_cast<Sh4Recompiler *>(recompiler);
+	if (!sh4rec->hasCodeCache())
+	{
+#ifdef LIBRETRO
+		// Init() overrides DynarecEnabled off when it gets no memory; drop the
+		// override, or a successful retry would not be used, and a second
+		// failure sets it again. libretro only: there the option has no config
+		// key (shell/libretro/option.cpp names it ""), so reset() is exactly
+		// "not overridden". Elsewhere the Settings::reset() in loadGame() has
+		// already cleared the override and reloaded the player's own choice
+		// from the config, and reset() here would overwrite it with the default.
+		config::DynarecEnabled.reset();
+#endif
+		// Both executors cache the Sh4Context pointer at their Init(), and on a
+		// host where Emulator::init() runs once per process the interpreter's is
+		// as old as the process while the address space is not: retro_deinit()
+		// releases it and retro_init() reserves it again, so p_sh4rcb may have
+		// moved. The interpreter is what runs if the retry below fails again, so
+		// re-point it too — first, since the recompiler's own Init() ends by
+		// generating code against the context it just re-read.
+		interpreter->Init();
+		// Term() has no code cache to release here; it is the other half of the
+		// bm_Init()/Sh4Interpreter::Init() that Init() opens with.
+		sh4rec->Term();
+		sh4rec->Init();
+		NOTICE_LOG(DYNAREC, "SH4 recompiler asked for executable memory again: %s",
+				sh4rec->hasCodeCache() ? "got it" : "still none");
+	}
+#endif
+#if FEAT_AREC != DYNAREC_NONE
+	if (aica::arm::recompiler::ICache == nullptr)
+	{
+		// No term(): it would only release a code cache, and there is none.
+		aica::arm::recompiler::init();
+		NOTICE_LOG(DYNAREC, "ARM7 recompiler asked for executable memory again: %s",
+				aica::arm::recompiler::ICache != nullptr ? "got it" : "still none");
+	}
+#endif
+	// The AICA DSP recompiler needs nothing here: the dc_reset(true) that
+	// follows takes aica::reset() through sgc::term() / sgc::init(), which is a
+	// dsp::recTerm() / dsp::recInit() pair, so it already asks on every load.
+}
+
 Sh4Executor *Emulator::getSh4Executor()
 {
 #if FEAT_SHREC != DYNAREC_NONE
@@ -572,6 +628,7 @@ void Emulator::loadGame(const char *path, LoadProgress *progress)
 
 		config::Settings::instance().reset();
 		config::Settings::instance().load(false);
+		retryRecompilers();
 		dc_reset(true);
 		memset(&settings.network.md5, 0, sizeof(settings.network.md5));
 

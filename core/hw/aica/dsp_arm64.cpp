@@ -471,7 +471,8 @@ void recInit()
 	if (!rc || pCodeBuffer == nullptr)
 	{
 		// The host has no executable memory to give (virtmem::setJitAllocator).
-		// runStep() then uses the DSP interpreter for this session.
+		// runStep() then uses the DSP interpreter instead — until the next
+		// dsp::init(), which every dc_reset(true) reaches, asks again.
 		WARN_LOG(AICA, "Cannot get executable memory for the DSP recompiler. Using the interpreter");
 		pCodeBuffer = nullptr;
 		return;

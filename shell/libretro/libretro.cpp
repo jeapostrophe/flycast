@@ -311,7 +311,8 @@ void retro_set_environment(retro_environment_t cb)
 static void retro_keyboard_event(bool down, unsigned keycode, uint32_t character, uint16_t key_modifiers);
 
 // Now comes the interesting stuff
-// Where the recompilers get their executable memory, decided once per process.
+// Where the recompilers get their executable memory, asked again at every
+// retro_init().
 //
 // On iOS the answer is normally "from the frontend": an iOS 26 device with
 // SPTM/TXM will not execute a page this process mapped for itself, only memory a
@@ -381,9 +382,12 @@ static void configureJitMemory()
 		bool canJit = true;
 		if (!environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &canJit) || canJit)
 		{
-			// No restrictions: map our own pages, as we always did. In a
+			// No restrictions: map our own pages, as we always did — in a
 			// FEAT_NO_RWX_PAGES build prepare_jit_block() gets that as a single
-			// r-w-x mapping at a zero offset.
+			// r-w-x mapping at a zero offset. Uninstall any allocator an earlier
+			// retro_init() left behind, or prepare_jit_block() would still route
+			// through the frontend this answer says we do not need.
+			virtmem::setJitAllocator(nullptr, nullptr);
 			NOTICE_LOG(DYNAREC, "EXEC_MEM: no restrictions, allocating our own JIT memory");
 			return;
 		}
@@ -455,9 +459,12 @@ void retro_init()
 
 #ifdef USE_FRONTEND_EXEC_MEM
 	// Before emu.init(): that is where the SH4 recompiler asks for its code
-	// cache, and on Apple hosts it only ever happens once per process.
-	if (!emuInited)
-		configureJitMemory();
+	// cache. Every retro_init(), not only the first — emu.init() runs once per
+	// process here, so probing only there would settle interpreted-or-recompiled
+	// for the life of the application, and what the frontend has to lend changes
+	// between one game and the next. Recompilers that were told no ask again
+	// from Emulator::retryRecompilers().
+	configureJitMemory();
 #endif
 
 #if defined(__APPLE__) || (defined(__GNUC__) && defined(__linux__) && !defined(__ANDROID__))
@@ -2195,16 +2202,6 @@ static bool set_dx11_hw_render()
 // Loading/unloading games
 bool retro_load_game(const struct retro_game_info *game)
 {
-#ifdef USE_FRONTEND_EXEC_MEM
-	// Loading a game is never refused for want of a JIT: without one the
-	// interpreters run instead, which is worth saying out loud because it is the
-	// difference the player will feel. Sh4Recompiler::Init() settled this at
-	// retro_init() and it is the SH4's answer alone; the ARM7 and the AICA DSP
-	// decide the same way, independently, and log what they decided.
-	if (!config::DynarecEnabled)
-		os_notify("No JIT available: running interpreted", 5000);
-#endif
-
 	NOTICE_LOG(BOOT, "retro_load_game: %s", game->path);
 
 	extract_basename(g_base_name, game->path, sizeof(g_base_name));
@@ -2398,6 +2395,17 @@ bool retro_load_game(const struct retro_game_info *game)
 	config::ScreenStretching = 100;
 	if (!loadGame())
 		return false;
+
+#ifdef USE_FRONTEND_EXEC_MEM
+	// Loading a game is never refused for want of a JIT: without one the
+	// interpreters run instead, which is worth saying out loud because it is the
+	// difference the player will feel. After loadGame(), not before:
+	// retryRecompilers() asks again there, so retro_init()'s answer is not the
+	// final one. This is the SH4's answer alone; the ARM7 and the AICA DSP
+	// decide the same way, independently, and log what they decided.
+	if (!config::DynarecEnabled)
+		os_notify("No JIT available: running interpreted", 5000);
+#endif
 
 	rotate_game = config::Rotate90;
 	if (rotate_game)

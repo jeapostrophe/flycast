@@ -370,8 +370,9 @@ void Sh4Recompiler::Init()
 	{
 		// The host has no executable memory to give (virtmem::setJitAllocator).
 		// Emitting code we may not branch into would crash, so run the
-		// interpreter for this session: getSh4Executor() returns it as soon as
-		// DynarecEnabled is false.
+		// interpreter instead: getSh4Executor() returns it as soon as
+		// DynarecEnabled is false. Not for the rest of the session —
+		// Emulator::retryRecompilers() asks again at every game load.
 		WARN_LOG(DYNAREC, "Cannot get executable memory for the SH4 recompiler. Using the interpreter");
 		CodeCache = nullptr;
 		config::DynarecEnabled.override(false);
@@ -400,6 +401,11 @@ void Sh4Recompiler::Term()
 	TempCodeCache = nullptr;
 	bm_Term();
 	super::Term();
+}
+
+bool Sh4Recompiler::hasCodeCache() const
+{
+	return CodeCache != nullptr;
 }
 
 Sh4Executor *Get_Sh4Recompiler()
