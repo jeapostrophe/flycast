@@ -1799,6 +1799,86 @@ enum retro_mod
                                             * used, mainly for use iOS/tvOS. On other platforms the result is true.
                                             */
 
+/* Back-ported from libretro-common (RetroArch), which carries these two
+ * environment commands and their structs. This block is guarded so that the
+ * next wholesale sync of this header supersedes it without a conflict. */
+#ifndef RETRO_ENVIRONMENT_EXEC_MEM_ALLOC
+
+#define RETRO_ENVIRONMENT_EXEC_MEM_ALLOC 83
+                                           /* struct retro_exec_mem_alloc * --
+                                            * Allocates a region of executable memory, optionally dual-mapped.
+                                            *
+                                            * The frontend allocates memory suitable for JIT code generation and
+                                            * returns it to the core. The returned mode tells the core how to use
+                                            * the memory:
+                                            *
+                                            * - RETRO_EXEC_MEM_MODE_UNRESTRICTED: The platform has no restrictions
+                                            *   on executable memory. The core should self-allocate. Do not call
+                                            *   this environment with a non-zero size in this mode.
+                                            * - RETRO_EXEC_MEM_MODE_RWX: Single mapping, read-write-execute.
+                                            *   rx and rw point to the same region.
+                                            * - RETRO_EXEC_MEM_MODE_WX_TOGGLE: Single mapping, write XOR execute.
+                                            *   rx and rw point to the same region; the core must toggle
+                                            *   protections itself (e.g. mprotect) before writing or executing.
+                                            * - RETRO_EXEC_MEM_MODE_DUAL_MAP: Separate read-execute and read-write
+                                            *   mappings of the same physical pages. The core writes through rw
+                                            *   and executes from rx.
+                                            *
+                                            * Returned memory is page-aligned. The frontend tracks all allocations
+                                            * and frees any outstanding ones when the core is unloaded.
+                                            *
+                                            * The core sets version and size before calling. The frontend fills
+                                            * in mode, rx, and rw on success.
+                                            *
+                                            * If size is 0, this is a probe: the frontend returns true and sets
+                                            * mode to indicate what kind of memory it would provide, but does not
+                                            * allocate. rx and rw will be NULL. Cores can use this to decide
+                                            * whether to take a JIT code path before committing to an allocation.
+                                            *
+                                            * Returns true if the allocation succeeded, false otherwise. If the
+                                            * frontend does not support this call, it returns false and the core
+                                            * should fall back to managing its own executable memory.
+                                            */
+
+#define RETRO_ENVIRONMENT_EXEC_MEM_FREE  84
+                                           /* const struct retro_exec_mem_free * --
+                                            * Frees a region of executable memory previously allocated with
+                                            * RETRO_ENVIRONMENT_EXEC_MEM_ALLOC.
+                                            *
+                                            * This is optional; the frontend will free all outstanding allocations
+                                            * when the core is unloaded. Cores that never need to release memory
+                                            * mid-session need not call this.
+                                            */
+
+/* How the frontend provisions executable memory. */
+#define RETRO_EXEC_MEM_MODE_UNAVAILABLE  0 /* No executable memory available */
+#define RETRO_EXEC_MEM_MODE_UNRESTRICTED 1 /* No restrictions; core should self-allocate */
+#define RETRO_EXEC_MEM_MODE_RWX          2 /* Single mapping, read-write-execute */
+#define RETRO_EXEC_MEM_MODE_WX_TOGGLE    3 /* Single mapping, write XOR execute (core toggles) */
+#define RETRO_EXEC_MEM_MODE_DUAL_MAP     4 /* Separate R-X and R-W mappings of same pages */
+
+/* Parameters for RETRO_ENVIRONMENT_EXEC_MEM_ALLOC.
+ * The core fills in version and size before calling.
+ * The frontend fills in mode, rx, and rw on success. */
+struct retro_exec_mem_alloc
+{
+   unsigned version;  /* Set by core (currently 1). */
+   size_t   size;     /* Set by core: requested bytes. */
+   unsigned mode;     /* Set by frontend: one of RETRO_EXEC_MEM_MODE_*. */
+   void    *rx;       /* Set by frontend: execute from this pointer. */
+   void    *rw;       /* Set by frontend: write through this pointer.
+                         Equal to rx when mode is RWX or WX_TOGGLE. */
+};
+
+/* Parameters for RETRO_ENVIRONMENT_EXEC_MEM_FREE. */
+struct retro_exec_mem_free
+{
+   void *rx;  /* The rx pointer returned by a previous alloc call. */
+};
+
+#endif /* RETRO_ENVIRONMENT_EXEC_MEM_ALLOC */
+
+
 
 /* VFS functionality */
 
