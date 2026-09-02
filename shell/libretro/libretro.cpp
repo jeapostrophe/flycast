@@ -349,6 +349,8 @@ static bool execMemAlloc(size_t size, void **rx, void **rw)
 		WARN_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes returned in unusable mode %u", size, req.mode);
 		if (req.rx != nullptr)
 			execMemFree(req.rx);
+		else if (req.rw != nullptr)
+			execMemFree(req.rw);
 		return false;
 	}
 	NOTICE_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes, rx %p rw %p", size, req.rx, req.rw);

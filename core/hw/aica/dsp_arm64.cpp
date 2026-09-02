@@ -493,7 +493,16 @@ void recInit()
 void recTerm()
 {
 #ifdef FEAT_NO_RWX_PAGES
+#if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
+	// DynCode is a pointer: prepare_jit_block() chose both addresses, so what it
+	// gave us is ours to release — including the degenerate case where the two
+	// aliases are the same block.
 	if (pCodeBuffer != nullptr)
+#else
+	// DynCode is a static code area, and the single-mapping fallback can hand it
+	// straight back. Unmapping that would take the executable's own .text with it.
+	if (pCodeBuffer != nullptr && pCodeBuffer != DynCode)
+#endif
 		virtmem::release_jit_block(DynCode, pCodeBuffer, CodeSize);
 #else
 	if (pCodeBuffer != nullptr && pCodeBuffer != DynCode)

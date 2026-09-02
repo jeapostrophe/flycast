@@ -308,7 +308,10 @@ bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdif
 		INFO_LOG(DYNAREC, "Info: Using host NO_RWX mode, rx ptr: %p, rw ptr: %p, offset: %ld", ptr_rx, ptr_rw, (long)*rx_offset);
 		return true;
 	}
-	int fd = allocate_shared_filemem(size);
+	// Without a static code area there is nowhere to put the RX half — the MAP_FIXED
+	// below cannot land at address 0 — and allocate_shared_filemem() would create and
+	// ftruncate() a file the size of the code cache before we found that out.
+	int fd = code_area != nullptr ? allocate_shared_filemem(size) : -1;
 	if (fd >= 0)
 	{
 		// Need to unmap the section we are about to use (it might be already unmapped but nevertheless...)

@@ -54,9 +54,12 @@ static void CPUUndefinedException();
 //
 int arm7ClockTicks;
 
-// The interpreter is compiled in even when a recompiler is available: it is
-// what aica::arm::run() falls back to when the host gives the recompiler no
-// executable memory (see recompiler::init()).
+// The interpreter is compiled in even when a recompiler is available: it is what
+// aica::arm::run() falls back to when the host gives the recompiler no executable
+// memory (see recompiler::init()), which is the difference between playing slowly
+// and not playing at all. It costs every target a second expansion of arm-new.h
+// in this translation unit — recompiler::interpret() below is the first — and
+// buys every target the fallback, not just the ones that need it today.
 static void runInterpreter(u32 CycleCount)
 {
 	if (!Arm7Enabled)
