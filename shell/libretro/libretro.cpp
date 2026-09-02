@@ -2097,7 +2097,13 @@ static bool set_dx11_hw_render()
 // Loading/unloading games
 bool retro_load_game(const struct retro_game_info *game)
 {
-#if defined(IOS)
+// Only a build that actually contains a recompiler needs a JIT-capable host.
+// An interpreter-only build (TARGET_NO_REC: FEAT_SHREC/FEAT_AREC/FEAT_DSPREC all
+// DYNAREC_NONE) compiles out every virtmem::prepare_jit_block() call site, so it
+// never asks for RWX/MAP_JIT pages and never branches into generated code. Such a
+// build runs correctly on an iOS host that denies JIT, and must not refuse to load
+// there. Keep the guard for JIT builds, where running without JIT does crash.
+#if defined(IOS) && FEAT_SHREC != DYNAREC_NONE
 	bool can_jit;
 	if (environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && !can_jit) {
 		// jit is required both for performance and for audio. trying to run
