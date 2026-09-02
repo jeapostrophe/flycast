@@ -62,6 +62,7 @@
 #include "cheats.h"
 #include "rend/osd.h"
 #include "cfg/option.h"
+#include "oslib/virtmem.h"
 #include "version.h"
 #include "oslib/oslib.h"
 
@@ -310,6 +311,84 @@ void retro_set_environment(retro_environment_t cb)
 static void retro_keyboard_event(bool down, unsigned keycode, uint32_t character, uint16_t key_modifiers);
 
 // Now comes the interesting stuff
+// Where the recompilers get their executable memory, decided once per process.
+//
+// On iOS the answer is normally "from the frontend": an iOS 26 device with
+// SPTM/TXM will not execute a page this process mapped for itself, only memory a
+// debugger prepared for it, and RETRO_ENVIRONMENT_EXEC_MEM_ALLOC is how a
+// frontend lends such memory to a core. When there is none on offer we run the
+// SH4, ARM7 and AICA DSP interpreters instead of refusing to load: slower, but
+// it plays.
+#if defined(IOS) && (FEAT_SHREC != DYNAREC_NONE || FEAT_AREC != DYNAREC_NONE || FEAT_DSPREC != DYNAREC_NONE)
+#define USE_FRONTEND_EXEC_MEM 1
+
+static bool execMemAlloc(size_t size, void **rx, void **rw)
+{
+	retro_exec_mem_alloc req{};
+	req.version = 1;
+	req.size = size;
+	if (!environ_cb(RETRO_ENVIRONMENT_EXEC_MEM_ALLOC, &req))
+	{
+		WARN_LOG(DYNAREC, "EXEC_MEM_ALLOC: frontend refused %zd bytes", size);
+		return false;
+	}
+	if (req.mode != RETRO_EXEC_MEM_MODE_DUAL_MAP || req.rx == nullptr || req.rw == nullptr)
+	{
+		// Only dual mapping is implemented here: it is what FEAT_NO_RWX_PAGES
+		// wants and what an iOS frontend can actually provide.
+		WARN_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes returned in unusable mode %u", size, req.mode);
+		return false;
+	}
+	NOTICE_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes, rx %p rw %p", size, req.rx, req.rw);
+	*rx = req.rx;
+	*rw = req.rw;
+	return true;
+}
+
+static void execMemFree(void *rx)
+{
+	retro_exec_mem_free req{};
+	req.rx = rx;
+	environ_cb(RETRO_ENVIRONMENT_EXEC_MEM_FREE, &req);
+}
+
+static void configureJitMemory()
+{
+	retro_exec_mem_alloc probe{};
+	probe.version = 1;
+	probe.size = 0;
+	// A frontend that doesn't know this call returns false and leaves the struct
+	// alone, which is not the same answer as "I have none": it means "do what
+	// you have always done".
+	const bool supported = environ_cb(RETRO_ENVIRONMENT_EXEC_MEM_ALLOC, &probe);
+	const unsigned mode = supported ? probe.mode : RETRO_EXEC_MEM_MODE_UNRESTRICTED;
+
+	if (mode == RETRO_EXEC_MEM_MODE_DUAL_MAP)
+	{
+		virtmem::setJitAllocator(execMemAlloc, execMemFree);
+		NOTICE_LOG(DYNAREC, "EXEC_MEM: frontend provides dual-mapped JIT memory. Using the recompilers");
+		return;
+	}
+	if (mode == RETRO_EXEC_MEM_MODE_UNRESTRICTED)
+	{
+		bool canJit = true;
+		if (!environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &canJit) || canJit)
+		{
+			// No restrictions: map our own pages, as on any other host.
+			NOTICE_LOG(DYNAREC, "EXEC_MEM: no restrictions, allocating our own JIT memory");
+			return;
+		}
+	}
+	// Nothing executable on offer. Install the allocator anyway so that every
+	// prepare_jit_block() asks the frontend and fails, rather than mapping pages
+	// we would not be allowed to branch into, and each recompiler falls back to
+	// its interpreter.
+	virtmem::setJitAllocator(execMemAlloc, execMemFree);
+	config::DynarecEnabled.override(false);
+	NOTICE_LOG(DYNAREC, "EXEC_MEM unavailable (mode %u). Running the SH4, ARM7 and DSP interpreters", mode);
+}
+#endif
+
 void retro_init()
 {
 	first_run = true;
@@ -361,6 +440,13 @@ void retro_init()
 #endif
 	os_InstallFaultHandler();
 	MapleConfigMap::UpdateVibration = updateVibration;
+
+#ifdef USE_FRONTEND_EXEC_MEM
+	// Before emu.init(): that is where the SH4 recompiler asks for its code
+	// cache, and on Apple hosts it only ever happens once per process.
+	if (!emuInited)
+		configureJitMemory();
+#endif
 
 #if defined(__APPLE__) || (defined(__GNUC__) && defined(__linux__) && !defined(__ANDROID__))
 	if (!emuInited)
@@ -2097,20 +2183,12 @@ static bool set_dx11_hw_render()
 // Loading/unloading games
 bool retro_load_game(const struct retro_game_info *game)
 {
-// Only a build that actually contains a recompiler needs a JIT-capable host.
-// An interpreter-only build (TARGET_NO_REC: FEAT_SHREC/FEAT_AREC/FEAT_DSPREC all
-// DYNAREC_NONE) compiles out every virtmem::prepare_jit_block() call site, so it
-// never asks for RWX/MAP_JIT pages and never branches into generated code. Such a
-// build runs correctly on an iOS host that denies JIT, and must not refuse to load
-// there. Keep the guard for JIT builds, where running without JIT does crash.
-#if defined(IOS) && FEAT_SHREC != DYNAREC_NONE
-	bool can_jit;
-	if (environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && !can_jit) {
-		// jit is required both for performance and for audio. trying to run
-		// without the jit will cause a crash.
-		os_notify("Cannot run without JIT", 5000);
-		return false;
-	}
+#ifdef USE_FRONTEND_EXEC_MEM
+	// retro_init() decided this, and it does not change while the core is
+	// loaded. Loading a game is never refused for want of a JIT: without one the
+	// interpreters run instead.
+	if (!config::DynarecEnabled)
+		os_notify("No JIT available: running interpreted", 5000);
 #endif
 
 	NOTICE_LOG(BOOT, "retro_load_game: %s", game->path);

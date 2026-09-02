@@ -63,6 +63,15 @@
 #define FEAT_NO_RWX_PAGES
 #endif
 
+// The libretro core on iOS gets its executable memory from the frontend
+// (RETRO_ENVIRONMENT_EXEC_MEM_ALLOC), which hands out two mappings of the same
+// physical pages: one r-x to run from, one r-w to write through. An iOS 26
+// device with SPTM/TXM will not execute a page the process mapped for itself,
+// so this is the only shape of JIT memory available there.
+#if defined(TARGET_IPHONE) && defined(LIBRETRO)
+#define FEAT_NO_RWX_PAGES
+#endif
+
 //defaults
 
 #ifndef FEAT_SHREC
