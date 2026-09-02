@@ -24,6 +24,7 @@
 #include "oslib/oslib.h"
 #include "rend/transform_matrix.h"
 #include "texture.h"
+#include <cstdlib>
 #include <set>
 
 #if VULKAN_HPP_DISPATCH_LOADER_DYNAMIC == 1
@@ -284,25 +285,33 @@ bool VulkanContext::init(retro_hw_render_interface_vulkan *retro_render_if)
 	maxSamplerAnisotropy =  properties->limits.maxSamplerAnisotropy;
 	vendorID = properties->vendorID;
 
+	// Bisection switch (retro-trainer PLAN-ipad COR-03): with this set, the three
+	// PVR-native 16-bit formats count as unsupported, so every texture decodes to
+	// 8888 — the way to tell a defect in those formats on one Metal stack from a
+	// defect anywhere else, without a rebuild.
+	const bool force8888 = getenv("RT_FLYCAST_TEXTURES_8888") != nullptr;
+	if (force8888)
+		NOTICE_LOG(RENDERER, "RT_FLYCAST_TEXTURES_8888 is set: 16-bit texture formats disabled, everything decodes to 8888");
+
 	vk::FormatProperties formatProperties = physicalDevice.getFormatProperties(vk::Format::eR5G5B5A1UnormPack16);
 	if ((formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc))
-		optimalTilingSupported1555 = true;
+		optimalTilingSupported1555 = !force8888;
 	else
 		NOTICE_LOG(RENDERER, "eR5G5B5A1UnormPack16 not supported for optimal tiling");
 	formatProperties = physicalDevice.getFormatProperties(vk::Format::eR5G6B5UnormPack16);
 	if ((formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc))
-		optimalTilingSupported565 = true;
+		optimalTilingSupported565 = !force8888;
 	else
 		NOTICE_LOG(RENDERER, "eR5G6B5UnormPack16 not supported for optimal tiling");
 	formatProperties = physicalDevice.getFormatProperties(vk::Format::eR4G4B4A4UnormPack16);
 	if ((formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst)
 			&& (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc))
-		optimalTilingSupported4444 = true;
+		optimalTilingSupported4444 = !force8888;
 	else
 		NOTICE_LOG(RENDERER, "eR4G4B4A4UnormPack16 not supported for optimal tiling");
 
