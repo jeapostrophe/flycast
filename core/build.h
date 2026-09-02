@@ -63,12 +63,18 @@
 #define FEAT_NO_RWX_PAGES
 #endif
 
-// The libretro core on iOS gets its executable memory from the frontend
+// The libretro core on iOS asks the frontend for its executable memory
 // (RETRO_ENVIRONMENT_EXEC_MEM_ALLOC), which hands out two mappings of the same
 // physical pages: one r-x to run from, one r-w to write through. An iOS 26
 // device with SPTM/TXM will not execute a page the process mapped for itself,
-// so this is the only shape of JIT memory available there.
+// so that is the only shape of JIT memory available there.
+//
+// One condition, one macro: FEAT_HOST_JIT_MEMORY is what makes the shell
+// install virtmem::setJitAllocator(), FEAT_NO_RWX_PAGES is what makes the
+// recompilers write through one address and execute at another, and the two
+// must never disagree about which builds they apply to.
 #if defined(TARGET_IPHONE) && defined(LIBRETRO)
+#define FEAT_HOST_JIT_MEMORY
 #define FEAT_NO_RWX_PAGES
 #endif
 

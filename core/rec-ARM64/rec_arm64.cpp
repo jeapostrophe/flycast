@@ -78,11 +78,13 @@ static DynaCode *writeStoreQueue64;
 static void jitWriteProtect(Sh4CodeBuffer &codeBuffer, bool enable)
 {
 #ifdef FEAT_NO_RWX_PAGES
-    // Dual-mapped: the code buffer we write through is never executable and its
-    // protection never changes.
-    (void)codeBuffer;
-    (void)enable;
-#elif defined(TARGET_IPHONE)
+    if (cc_rx_offset != 0)
+    	// Dual-mapped: the buffer we write through is never executable, so its
+    	// protection never changes. A zero offset means we fell back to a single
+    	// r-w-x mapping, which does still need the toggle.
+    	return;
+#endif
+#ifdef TARGET_IPHONE
     if (enable)
     	virtmem::region_set_exec(codeBuffer.getBase(), codeBuffer.getSize());
     else

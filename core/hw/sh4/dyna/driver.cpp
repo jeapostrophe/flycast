@@ -387,8 +387,11 @@ void Sh4Recompiler::Term()
 {
 	INFO_LOG(DYNAREC, "Sh4Recompiler::Term");
 #ifdef FEAT_NO_RWX_PAGES
-	if (CodeCache != nullptr)
-		virtmem::release_jit_block(CodeCache, (u8 *)CodeCache + cc_rx_offset, FULL_SIZE);
+	// (rx, rw), in that order: that is what every release_jit_block() reads, and
+	// CodeCache is the rw alias. Passing them the other way round unmapped the
+	// wrong half.
+	if (CodeCache != nullptr && CodeCache != SH4_TCB)
+		virtmem::release_jit_block((u8 *)CodeCache + cc_rx_offset, CodeCache, FULL_SIZE);
 #else
 	if (CodeCache != nullptr && CodeCache != SH4_TCB)
 		virtmem::release_jit_block(CodeCache, FULL_SIZE);

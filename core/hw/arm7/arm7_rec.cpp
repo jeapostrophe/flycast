@@ -696,8 +696,10 @@ void init()
 void term()
 {
 #ifdef FEAT_NO_RWX_PAGES
-	if (ICache != nullptr)
-		virtmem::release_jit_block(ARM7_TCB, ICache, ICacheSize);
+	// ARM7_TCB is the rx alias only where it is a static code area; where it is
+	// a pointer the host picked the address, so derive rx from the offset.
+	if (ICache != nullptr && ICache != ARM7_TCB)
+		virtmem::release_jit_block(ICache + rx_offset, ICache, ICacheSize);
 #else
 	if (ICache != nullptr && ICache != ARM7_TCB)
 		virtmem::release_jit_block(ICache, ICacheSize);

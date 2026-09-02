@@ -58,14 +58,17 @@ static ptrdiff_t rx_offset;
 
 static void JITWriteProtect(bool enable)
 {
-#ifndef FEAT_NO_RWX_PAGES
+#ifdef FEAT_NO_RWX_PAGES
+    if (rx_offset != 0)
+    	// Dual-mapped: pCodeBuffer is the r-w alias and is never executed, so
+    	// its protection never changes. A zero offset means we fell back to a
+    	// single r-w-x mapping, which does still need the toggle.
+    	return;
+#endif
     if (enable)
     	virtmem::region_set_exec(pCodeBuffer, CodeSize);
     else
     	virtmem::region_unlock(pCodeBuffer, CodeSize);
-#endif
-    // Dual-mapped: pCodeBuffer is the r-w alias and is never executed, so its
-    // protection never changes.
 }
 #endif
 

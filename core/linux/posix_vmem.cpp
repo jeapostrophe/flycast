@@ -309,31 +309,44 @@ bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdif
 		return true;
 	}
 	int fd = allocate_shared_filemem(size);
-	if (fd < 0)
-		return false;
-
-	// Need to unmap the section we are about to use (it might be already unmapped but nevertheless...)
-	munmap(code_area, size);
-
-	// Map the RX bits on the code_area, for proximity, as usual.
-	void *ptr_rx = mmap(code_area, size, PROT_READ | PROT_EXEC,
-	                    MAP_SHARED | MAP_NOSYNC | MAP_FIXED, fd, 0);
-	if (ptr_rx != code_area)
+	if (fd >= 0)
 	{
-		close(fd);
-		return false;
+		// Need to unmap the section we are about to use (it might be already unmapped but nevertheless...)
+		munmap(code_area, size);
+
+		// Map the RX bits on the code_area, for proximity, as usual.
+		void *ptr_rx = mmap(code_area, size, PROT_READ | PROT_EXEC,
+							MAP_SHARED | MAP_NOSYNC | MAP_FIXED, fd, 0);
+		if (ptr_rx == code_area)
+		{
+			// Now remap the same memory as RW in some location we don't really care at all.
+			void *ptr_rw = mmap(NULL, size, PROT_READ | PROT_WRITE,
+								MAP_SHARED | MAP_NOSYNC, fd, 0);
+			close(fd);
+			if (ptr_rw != MAP_FAILED)
+			{
+				*code_area_rw = ptr_rw;
+				*rx_offset = (char*)ptr_rx - (char*)ptr_rw;
+				INFO_LOG(DYNAREC, "Info: Using NO_RWX mode, rx ptr: %p, rw ptr: %p, offset: %ld", ptr_rx, ptr_rw, (long)*rx_offset);
+				return true;
+			}
+			munmap(ptr_rx, size);
+		}
+		else
+		{
+			close(fd);
+		}
 	}
-
-	// Now remap the same memory as RW in some location we don't really care at all.
-	void *ptr_rw = mmap(NULL, size, PROT_READ | PROT_WRITE,
-	                    MAP_SHARED | MAP_NOSYNC, fd, 0);
-
-	*code_area_rw = ptr_rw;
-	*rx_offset = (char*)ptr_rx - (char*)ptr_rw;
-	close(fd);
-	INFO_LOG(DYNAREC, "Info: Using NO_RWX mode, rx ptr: %p, rw ptr: %p, offset: %ld", ptr_rx, ptr_rw, (long)*rx_offset);
-
-	return (ptr_rw != MAP_FAILED);
+	// Two address spaces over the same pages are not always to be had: there may
+	// be no static code area to put the RX half on, or no shared memory. A single
+	// r-w-x mapping is the degenerate case of the same thing — at a zero offset
+	// CC_RW2RX/CC_RX2RW are the identity — so fall back to it rather than denying
+	// the recompilers any memory at all. This is what a FEAT_NO_RWX_PAGES build
+	// gets on a host that has no objection to r-w-x pages.
+	if (!prepare_jit_block(code_area, size, code_area_rw))
+		return false;
+	*rx_offset = 0;
+	return true;
 }
 
 void release_jit_block(void *code_area1, void *code_area2, size_t size)
@@ -341,8 +354,14 @@ void release_jit_block(void *code_area1, void *code_area2, size_t size)
 	JitDeallocator deallocator = getJitDeallocator();
 	if (deallocator != nullptr)
 	{
-		// Either alias identifies the block to the host.
-		deallocator(code_area1 != nullptr ? code_area1 : code_area2);
+		deallocator(code_area1);
+		return;
+	}
+	if (code_area1 == code_area2)
+	{
+		// Degenerate single r-w-x mapping (see prepare_jit_block). The caller
+		// has already checked it is not the statically allocated code area.
+		munmap(code_area1, size);
 		return;
 	}
 	// keep code_area1 (RX) mapped since it's statically allocated

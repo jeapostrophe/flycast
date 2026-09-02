@@ -319,8 +319,21 @@ static void retro_keyboard_event(bool down, unsigned keycode, uint32_t character
 // frontend lends such memory to a core. When there is none on offer we run the
 // SH4, ARM7 and AICA DSP interpreters instead of refusing to load: slower, but
 // it plays.
-#if defined(IOS) && (FEAT_SHREC != DYNAREC_NONE || FEAT_AREC != DYNAREC_NONE || FEAT_DSPREC != DYNAREC_NONE)
+#if defined(FEAT_HOST_JIT_MEMORY) \
+	&& (FEAT_SHREC != DYNAREC_NONE || FEAT_AREC != DYNAREC_NONE || FEAT_DSPREC != DYNAREC_NONE)
 #define USE_FRONTEND_EXEC_MEM 1
+
+// Whether the recompilers have anywhere to put their code. False means every one
+// of them is running its interpreter, which is more than config::DynarecEnabled
+// says: that option is the SH4's alone.
+static bool jitMemoryAvailable = true;
+
+static void execMemFree(void *rx)
+{
+	retro_exec_mem_free req{};
+	req.rx = rx;
+	environ_cb(RETRO_ENVIRONMENT_EXEC_MEM_FREE, &req);
+}
 
 static bool execMemAlloc(size_t size, void **rx, void **rw)
 {
@@ -335,21 +348,18 @@ static bool execMemAlloc(size_t size, void **rx, void **rw)
 	if (req.mode != RETRO_EXEC_MEM_MODE_DUAL_MAP || req.rx == nullptr || req.rw == nullptr)
 	{
 		// Only dual mapping is implemented here: it is what FEAT_NO_RWX_PAGES
-		// wants and what an iOS frontend can actually provide.
+		// wants, and what a host that bans self-mapped executable pages can
+		// actually provide. The frontend allocated all the same, so hand it back
+		// rather than leaving it recorded against us until the core unloads.
 		WARN_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes returned in unusable mode %u", size, req.mode);
+		if (req.rx != nullptr)
+			execMemFree(req.rx);
 		return false;
 	}
 	NOTICE_LOG(DYNAREC, "EXEC_MEM_ALLOC: %zd bytes, rx %p rw %p", size, req.rx, req.rw);
 	*rx = req.rx;
 	*rw = req.rw;
 	return true;
-}
-
-static void execMemFree(void *rx)
-{
-	retro_exec_mem_free req{};
-	req.rx = rx;
-	environ_cb(RETRO_ENVIRONMENT_EXEC_MEM_FREE, &req);
 }
 
 static void configureJitMemory()
@@ -374,17 +384,21 @@ static void configureJitMemory()
 		bool canJit = true;
 		if (!environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &canJit) || canJit)
 		{
-			// No restrictions: map our own pages, as on any other host.
+			// No restrictions: map our own pages, as we always did. In a
+			// FEAT_NO_RWX_PAGES build prepare_jit_block() gets that as a single
+			// r-w-x mapping at a zero offset.
 			NOTICE_LOG(DYNAREC, "EXEC_MEM: no restrictions, allocating our own JIT memory");
 			return;
 		}
 	}
-	// Nothing executable on offer. Install the allocator anyway so that every
-	// prepare_jit_block() asks the frontend and fails, rather than mapping pages
-	// we would not be allowed to branch into, and each recompiler falls back to
-	// its interpreter.
+	// Nothing usable on offer — no executable memory at all, or only the RWX /
+	// WX_TOGGLE shapes, which this core does not implement. Install the allocator
+	// anyway so that every prepare_jit_block() asks the frontend and fails,
+	// rather than mapping pages we would not be allowed to branch into, and each
+	// recompiler falls back to its interpreter.
 	virtmem::setJitAllocator(execMemAlloc, execMemFree);
 	config::DynarecEnabled.override(false);
+	jitMemoryAvailable = false;
 	NOTICE_LOG(DYNAREC, "EXEC_MEM unavailable (mode %u). Running the SH4, ARM7 and DSP interpreters", mode);
 }
 #endif
@@ -2187,7 +2201,7 @@ bool retro_load_game(const struct retro_game_info *game)
 	// retro_init() decided this, and it does not change while the core is
 	// loaded. Loading a game is never refused for want of a JIT: without one the
 	// interpreters run instead.
-	if (!config::DynarecEnabled)
+	if (!jitMemoryAvailable)
 		os_notify("No JIT available: running interpreted", 5000);
 #endif
 
