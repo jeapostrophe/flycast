@@ -53,7 +53,18 @@ public:
 	u32 GetSwapChainSize() const { u32 m = retro_render_if->get_sync_index_mask(retro_render_if->handle); u32 n = 1; while (m >>= 1) n++; return n; }
 	int GetCurrentImageIndex() const { return retro_render_if->get_sync_index(retro_render_if->handle); }
 
-	void WaitIdle() const { queue.waitIdle(); }
+	// **vkQueueWaitIdle needs the queue externally synchronised, and the frontend owns
+	// that lock.** libretro_vulkan.h: "If the core submits command buffers itself to any
+	// of the queues provided in this interface, the core must lock and unlock the
+	// frontend from racing on the VkQueue. Queue submission can happen on any thread."
+	// Every caller here goes on to free a resource on the strength of this wait, so a
+	// frontend submitting from its own render thread would otherwise both race the wait
+	// and leave work outstanding behind it.
+	void WaitIdle() const {
+		retro_render_if->lock_queue(retro_render_if->handle);
+		queue.waitIdle();
+		retro_render_if->unlock_queue(retro_render_if->handle);
+	}
 	void SubmitCommandBuffers(const std::vector<vk::CommandBuffer> &buffers, vk::Fence fence) {
 		retro_render_if->lock_queue(retro_render_if->handle);
 		queue.submit(vk::SubmitInfo(nullptr, nullptr, buffers, nullptr), fence);

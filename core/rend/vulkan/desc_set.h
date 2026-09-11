@@ -18,6 +18,7 @@
 */
 #pragma once
 #include "vulkan_context.h"
+#include "commandpool.h"
 
 class DynamicDescSetAlloc
 {
@@ -35,7 +36,11 @@ public:
 
 	void nextFrame()
 	{
-		unsigned swapChainSize = VulkanContext::Instance()->GetSwapChainSize();
+		// The drawers that own these sets record into a CommandPool of
+		// CommandPool::defaultChainSize frames, so when this runs the PREVIOUS frame's
+		// command buffer is still pending. Recycling a descriptor set that buffer bound
+		// is VUID-vkUpdateDescriptorSets-None-03047 -- see frameRingSize().
+		unsigned swapChainSize = frameRingSize(VulkanContext::Instance()->GetSwapChainSize());
 		if (swapChainSize > descSetsInFlight.size())
 			descSetsInFlight.resize(swapChainSize);
 		else

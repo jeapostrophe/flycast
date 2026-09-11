@@ -21,13 +21,20 @@
 #pragma once
 #include "vulkan.h"
 
+#include <algorithm>
 #include <vector>
 #include <memory>
 
 class CommandPool : public FlightManager
 {
 public:
-	void Init(size_t chainSize = 2);
+	// How many frames a pool keeps in flight by default. BeginFrame() waits the fence
+	// of the frame `defaultChainSize` back, so the command buffers of the frames after
+	// that one are still pending when a new frame starts: every per-frame resource a
+	// drawer recycles (descriptor sets included) must be ringed at least this deep.
+	static constexpr size_t defaultChainSize = 2;
+
+	void Init(size_t chainSize = defaultChainSize);
 	void Term();
 	void BeginFrame();
 	void EndFrame();
@@ -55,3 +62,20 @@ private:
 	bool frameStarted = false;
 	vk::Device device{};
 };
+
+// **The depth any ring of per-frame resources must have.**
+//
+// A resource that is recycled once per frame -- a descriptor set, a framebuffer, a
+// staging texture -- may only be rewritten once the command buffer that last used it
+// has completed, and what decides that is the CommandPool it was recorded into, never
+// the frontend: a pool of `chainSize` frames waits the fence of the frame `chainSize`
+// back, so every frame after that one is still pending when a new frame starts.
+//
+// Rings that took their depth from the presentation swapchain -- or, under libretro,
+// from get_sync_index_mask() -- were only ever right because that number happened to
+// be >= the pool's. libretro_vulkan.h allows a frontend to advertise a single sync
+// index ("If bit #N is set in the return value, get_sync_index can return N"), and at
+// that depth the two disagree. Clamp.
+inline u32 frameRingSize(u32 frontendImages) {
+	return std::max<u32>((u32)CommandPool::defaultChainSize, frontendImages);
+}

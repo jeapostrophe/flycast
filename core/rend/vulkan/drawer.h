@@ -230,7 +230,10 @@ public:
 	vk::CommandBuffer GetCurrentCommandBuffer() const { return currentCommandBuffer; }
 
 protected:
-	virtual u32 GetSwapChainSize() { return GetContext()->GetSwapChainSize(); }
+	// Rings `imageIndex` -- and with it every per-image resource a subclass keys on
+	// GetCurrentImage() -- against the command buffers texCommandPool keeps in flight,
+	// not against the frontend's image count. See frameRingSize().
+	virtual u32 GetSwapChainSize() { return frameRingSize(GetContext()->GetSwapChainSize()); }
 	virtual vk::CommandBuffer BeginRenderPass() = 0;
 	void NewImage()
 	{
@@ -319,7 +322,7 @@ public:
 
 protected:
 	vk::CommandBuffer BeginRenderPass() override;
-	u32 GetSwapChainSize() override { return 2; }
+	u32 GetSwapChainSize() override { return CommandPool::defaultChainSize; }
 
 private:
 	std::unique_ptr<PipelineManager> screenPipelineManager;

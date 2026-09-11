@@ -486,6 +486,18 @@ void VulkanContext::beginFrame(vk::Extent2D extent)
 		vk::Extent2D caExtent = colorAttachments[currentImage]->getExtent();
 		if (extent != caExtent)
 		{
+			// **This attachment is the image the frontend was handed with set_image,
+			// and our own fences say nothing about the frontend's use of it.**
+			// libretro_vulkan.h: "The image itself however, must not be touched by the
+			// core until wait_sync_index has been completed later" — destroying it is
+			// the strongest form of touching it, and with a sync-index mask of 1 the
+			// Deleters queued here are freed by the commandPool.BeginFrame() a few
+			// lines below, in this same call. A frontend that samples the image where
+			// it lies (rather than reading it back behind a fence) still has that
+			// sampling pass outstanding, which is
+			// VUID-vkDestroyImageView-imageView-01026 against its descriptor set.
+			// Only on a resolution change, so the steady frame pays nothing.
+			retro_render_if->wait_sync_index(retro_render_if->handle);
 			addToFlight(new Deleter(std::move(colorAttachments[currentImage])));
 			addToFlight(new Deleter(std::move(framebuffers[currentImage])));
 		}

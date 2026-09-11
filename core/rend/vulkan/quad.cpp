@@ -173,6 +173,17 @@ void QuadPipeline::Init(ShaderManager *shaderManager, vk::RenderPass renderPass,
 	}
 }
 
+// **This is the one ring that is right to key on the frontend**, and it needs saying,
+// because every other per-frame ring here had to be clamped to frameRingSize().
+// A QuadDrawer's sets are bound only into the presentation command buffer, and the
+// presentation CommandPool is Init()ed at exactly GetSwapChainSize() frames (libretro:
+// VulkanContext::init; standalone: one pool per swapchain image), so ring and pool
+// depth move together by construction. Draw() also grows the vector on demand, so the
+// depth is really set by GetCurrentImageIndex()'s range, and clamping the size alone
+// would change nothing. Do not make the index rotate on its own either: VulkanOverlay
+// draws several crosshairs per frame through one QuadDrawer, passing a null imageView
+// after the first so that Draw() skips the descriptor write and reuses what is already
+// bound.
 void QuadDrawer::Init(QuadPipeline *pipeline)
 {
 	this->pipeline = pipeline;

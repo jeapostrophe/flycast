@@ -564,7 +564,12 @@ vk::CommandBuffer TextureDrawer::BeginRenderPass()
 		colorImageView,
 		depthAttachment->GetImageView(),
 	};
-	framebuffers.resize(GetContext()->GetSwapChainSize());
+	// Sized by the same number GetCurrentImage() is ringed by: Drawer::GetSwapChainSize()
+	// now clamps to frameRingSize(), so this must follow it rather than ask the context.
+	// Against a frontend advertising a single sync index the context says 1 while the
+	// index rings mod 2, and the assignment below would destroy the framebuffer the
+	// previous frame's still-pending command buffer was drawing into.
+	framebuffers.resize(GetSwapChainSize());
 	framebuffers[GetCurrentImage()] = device.createFramebufferUnique(vk::FramebufferCreateInfo(vk::FramebufferCreateFlags(),
 			rttPipelineManager->GetRenderPass(), imageViews, widthPow2, heightPow2, 1));
 

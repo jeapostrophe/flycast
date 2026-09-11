@@ -119,10 +119,15 @@ void BaseVulkanRenderer::ReInitOSD()
 
 void BaseVulkanRenderer::RenderFramebuffer(const FramebufferInfo& info)
 {
-	framebufferTexIndex = (framebufferTexIndex + 1) % GetContext()->GetSwapChainSize();
+	// These textures are uploaded from fbCommandPool, which keeps
+	// CommandPool::defaultChainSize frames in flight, so the ring must be that deep:
+	// at a depth of one this re-uploaded the very texture the previous frame's pending
+	// command buffer reads. See frameRingSize().
+	const u32 ringSize = frameRingSize(GetContext()->GetSwapChainSize());
+	framebufferTexIndex = (framebufferTexIndex + 1) % ringSize;
 
-	if (framebufferTextures.size() != GetContext()->GetSwapChainSize())
-		framebufferTextures.resize(GetContext()->GetSwapChainSize());
+	if (framebufferTextures.size() != ringSize)
+		framebufferTextures.resize(ringSize);
 	std::unique_ptr<Texture>& curTexture = framebufferTextures[framebufferTexIndex];
 	if (!curTexture)
 	{
