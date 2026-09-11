@@ -170,6 +170,8 @@ static double vib_delta[4];
 unsigned per_content_vmus = 0;
 
 static bool first_run = true;
+// retro_serialize_size left the emulator stopped for the retro_serialize that follows
+static bool emu_held_for_serialize;
 static bool rotate_screen;
 static bool rotate_game;
 static int framebufferWidth;
@@ -1316,9 +1318,16 @@ void retro_run()
 		glsm_ctl(GLSM_CTL_STATE_BIND, nullptr);
 #endif
 
-	// On the first call, we start the emulator
-	if (first_run)
-		emu.start();
+	// On the first call, we start the emulator, and restart it after a retro_serialize_size
+	// that no retro_serialize followed
+	{
+		std::lock_guard<std::mutex> lock(mtx_serialization);
+		if (first_run || emu_held_for_serialize)
+		{
+			emu.start();
+			emu_held_for_serialize = false;
+		}
+	}
 
 	poll_cb();
 	os_UpdateInputState();
@@ -2471,8 +2480,12 @@ size_t retro_serialize_size()
 
 	Serializer ser;
 	dc_serialize(ser);
+	// Leave the emulator stopped. With threaded rendering the sh4 thread would
+	// otherwise run on until retro_serialize stops it again, and the state can
+	// grow meanwhile (a new TA context is up to TA_DATA_SIZE), overflowing the
+	// buffer the frontend sized from this answer.
 	if (!first_run)
-		emu.start();
+		emu_held_for_serialize = true;
 
 	return ser.size();
 }
@@ -2499,7 +2512,10 @@ bool retro_serialize(void *data, size_t size)
 	} 
 
 	if (!first_run)
+	{
 		emu.start();
+		emu_held_for_serialize = false;
+	}
 
 	return result;
 }
@@ -2522,11 +2538,16 @@ bool retro_unserialize(const void * data, size_t size)
 		emu.loadstate(deser);
 	    retro_audio_flush_buffer();
 		if (!first_run)
+		{
 			emu.start();
+			emu_held_for_serialize = false;
+		}
 
 		return true;
 	} catch (const Deserializer::Exception& e) {
 		ERROR_LOG(SAVESTATE, "Loading state failed: %s", e.what());
+		// don't let retro_run resume a half-loaded machine
+		emu_held_for_serialize = false;
 		return false;
 	}
 }

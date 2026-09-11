@@ -72,8 +72,10 @@ TEST(SerializerBufferTest, ExactBufferSizeSucceeds)
 
 TEST(SerializerBufferTest, OffByOneOverflowThrowsException)
 {
-	// Create a buffer that's 1 byte too small
-	std::vector<char> buffer(sizeof(int) * 10 - 1);
+	// Create a buffer that's 1 byte too small for the header plus the data
+	Serializer dryRun(nullptr, 1000);
+	size_t headerSize = dryRun.size();
+	std::vector<char> buffer(headerSize + sizeof(int) * 10 - 1);
 	std::vector<int> data(10);
 	Serializer ser(buffer.data(), buffer.size());
 	ASSERT_THROW(ser.serialize(data.data(), data.size()), Serializer::Exception);
