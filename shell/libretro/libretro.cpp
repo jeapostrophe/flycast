@@ -2059,7 +2059,9 @@ static bool set_vulkan_hw_render()
 			RETRO_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE_VULKAN_VERSION,
 			VkGetApplicationInfo,
 			VkCreateDevice,
-			nullptr,
+			nullptr,	// destroy_device
+			nullptr,	// create_instance: the frontend's default instance is fine
+			VkCreateDevice2,
 	};
 	environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE, (void *)&negotiation_interface);
 

@@ -40,12 +40,13 @@ const VkApplicationInfo* VkGetApplicationInfo()
 	return &(VkApplicationInfo&)applicationInfo;
 }
 
-bool VkCreateDevice(retro_vulkan_context* context, VkInstance instance, VkPhysicalDevice gpu,
+// Shared body of the v1 and v2 context negotiation entry points. They differ only
+// in how the device is created: v1 calls vkCreateDevice itself, v2 must hand its
+// VkDeviceCreateInfo to the frontend's wrapper instead, so the frontend can add
+// the extensions, features and pNext structs it needs to the same device.
+static bool createDevice(retro_vulkan_context* context, VkInstance instance, VkPhysicalDevice gpu,
 		VkSurfaceKHR surface, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
-		const char** required_device_extensions,
-		unsigned num_required_device_extensions,
-		const char** required_device_layers, unsigned num_required_device_layers,
-		const VkPhysicalDeviceFeatures* required_features)
+		retro_vulkan_create_device_wrapper_t create_device_wrapper, void *opaque)
 {
 #if VULKAN_HPP_DISPATCH_LOADER_DYNAMIC == 1
 	VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc_addr);
@@ -229,7 +230,23 @@ bool VkCreateDevice(retro_vulkan_context* context, VkInstance instance, VkPhysic
 		deviceCreateInfo.pNext = &featuresChain;
 	else
 		deviceCreateInfo.setPEnabledFeatures(&features);
-	vk::Device newDevice = physicalDevice.createDevice(deviceCreateInfo);
+	vk::Device newDevice;
+	if (create_device_wrapper != nullptr)
+	{
+		// v2: "Rather than call vkCreateDevice directly, a core must call the
+		// CreateDevice wrapper provided". It returns VK_NULL_HANDLE on failure.
+		const VkDeviceCreateInfo& createInfo = deviceCreateInfo;
+		newDevice = vk::Device(create_device_wrapper(context->gpu, opaque, &createInfo));
+		if (!newDevice)
+		{
+			ERROR_LOG(RENDERER, "Frontend failed to create the Vulkan device");
+			return false;
+		}
+	}
+	else
+	{
+		newDevice = physicalDevice.createDevice(deviceCreateInfo);
+	}
 
 	context->device = (VkDevice)newDevice;
 #if VULKAN_HPP_DISPATCH_LOADER_DYNAMIC == 1
@@ -241,6 +258,33 @@ bool VkCreateDevice(retro_vulkan_context* context, VkInstance instance, VkPhysic
 	context->presentation_queue = (VkQueue)newDevice.getQueue(context->presentation_queue_family_index, 0);
 
 	return true;
+}
+
+// The required_* arguments are unused: this core has never read them, and picks its
+// own extension, layer and feature set below.
+bool VkCreateDevice(retro_vulkan_context* context, VkInstance instance, VkPhysicalDevice gpu,
+		VkSurfaceKHR surface, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
+		const char**,
+		unsigned,
+		const char**, unsigned,
+		const VkPhysicalDeviceFeatures*)
+{
+	return createDevice(context, instance, gpu, surface, get_instance_proc_addr, nullptr, nullptr);
+}
+
+bool VkCreateDevice2(retro_vulkan_context* context, VkInstance instance, VkPhysicalDevice gpu,
+		VkSurfaceKHR surface, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
+		retro_vulkan_create_device_wrapper_t create_device_wrapper, void *opaque)
+{
+	if (create_device_wrapper == nullptr)
+	{
+		// v2 has no fallback: "Rather than call vkCreateDevice directly, a core must
+		// call the CreateDevice wrapper provided". Without one there is nothing to
+		// create the device with, so fail instead of quietly creating our own.
+		ERROR_LOG(RENDERER, "Frontend provided no create_device wrapper to create_device2");
+		return false;
+	}
+	return createDevice(context, instance, gpu, surface, get_instance_proc_addr, create_device_wrapper, opaque);
 }
 
 bool VulkanContext::init(retro_hw_render_interface_vulkan *retro_render_if)
