@@ -170,8 +170,9 @@ static double vib_delta[4];
 unsigned per_content_vmus = 0;
 
 static bool first_run = true;
-// retro_serialize_size left the emulator stopped for the retro_serialize that follows
-static bool emu_held_for_serialize;
+// A savestate call (retro_serialize_size, retro_serialize, retro_unserialize) left the
+// emulator stopped; the next retro_run restarts it
+static bool emu_held_for_savestate;
 static bool rotate_screen;
 static bool rotate_game;
 static int framebufferWidth;
@@ -1318,14 +1319,13 @@ void retro_run()
 		glsm_ctl(GLSM_CTL_STATE_BIND, nullptr);
 #endif
 
-	// On the first call, we start the emulator, and restart it after a retro_serialize_size
-	// that no retro_serialize followed
+	// On the first call, we start the emulator, and restart it after a savestate call
 	{
 		std::lock_guard<std::mutex> lock(mtx_serialization);
-		if (first_run || emu_held_for_serialize)
+		if (first_run || emu_held_for_savestate)
 		{
 			emu.start();
-			emu_held_for_serialize = false;
+			emu_held_for_savestate = false;
 		}
 	}
 
@@ -2480,12 +2480,12 @@ size_t retro_serialize_size()
 
 	Serializer ser;
 	dc_serialize(ser);
-	// Leave the emulator stopped. With threaded rendering the sh4 thread would
-	// otherwise run on until retro_serialize stops it again, and the state can
-	// grow meanwhile (a new TA context is up to TA_DATA_SIZE), overflowing the
-	// buffer the frontend sized from this answer.
+	// Leave the emulator stopped until the next retro_run. With threaded rendering
+	// the sh4 thread would otherwise run on until a later retro_serialize stops it
+	// again, and the state can grow meanwhile (a new TA context is up to
+	// TA_DATA_SIZE), overflowing the buffer the frontend sized from this answer.
 	if (!first_run)
-		emu_held_for_serialize = true;
+		emu_held_for_savestate = true;
 
 	return ser.size();
 }
@@ -2511,11 +2511,11 @@ bool retro_serialize(void *data, size_t size)
 		ERROR_LOG(SAVESTATE, "Saving state failed: %s", e.what());
 	} 
 
+	// Stay stopped, as after retro_serialize_size: a frontend may serialize more
+	// than once for one size (twice, to see whether every byte gets written), and
+	// each must find the machine the size was measured on.
 	if (!first_run)
-	{
-		emu.start();
-		emu_held_for_serialize = false;
-	}
+		emu_held_for_savestate = true;
 
 	return result;
 }
@@ -2537,17 +2537,16 @@ bool retro_unserialize(const void * data, size_t size)
 		Deserializer deser(data, size);
 		emu.loadstate(deser);
 	    retro_audio_flush_buffer();
+		// Stay stopped until the next retro_run, so a retro_serialize_size and
+		// retro_serialize made before it see the state just loaded
 		if (!first_run)
-		{
-			emu.start();
-			emu_held_for_serialize = false;
-		}
+			emu_held_for_savestate = true;
 
 		return true;
 	} catch (const Deserializer::Exception& e) {
 		ERROR_LOG(SAVESTATE, "Loading state failed: %s", e.what());
 		// don't let retro_run resume a half-loaded machine
-		emu_held_for_serialize = false;
+		emu_held_for_savestate = false;
 		return false;
 	}
 }
