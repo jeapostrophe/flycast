@@ -506,7 +506,13 @@ void recTerm()
 #endif
 		virtmem::release_jit_block(DynCode, pCodeBuffer, CodeSize);
 #else
+#if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)
+	// DynCode is a pointer here too, and equal to pCodeBuffer: the MAP_JIT block is ours, and
+	// every dc_reset(true) maps another, so a block not released here stays mapped.
+	if (pCodeBuffer != nullptr)
+#else
 	if (pCodeBuffer != nullptr && pCodeBuffer != DynCode)
+#endif
 		virtmem::release_jit_block(pCodeBuffer, CodeSize);
 #endif
 #if defined(TARGET_IPHONE) || defined(TARGET_ARM_MAC)

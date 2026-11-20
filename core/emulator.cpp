@@ -43,6 +43,7 @@
 #include "hw/pvr/pvr.h"
 #include "profiler/fc_profiler.h"
 #include "oslib/storage.h"
+#include "oslib/virtmem.h"
 #include "wsi/context.h"
 #include <chrono>
 #ifndef LIBRETRO
@@ -557,7 +558,15 @@ void Emulator::retryRecompilers()
 	}
 #endif
 #if FEAT_AREC != DYNAREC_NONE
-	if (aica::arm::recompiler::ICache == nullptr)
+	// An SH4 AOT mode the frontend's option chose at this load denies executable memory
+	// (rec-ARM64/aot_arm64.cpp) after retro_init gave the ARM7 its cache: release it, so the
+	// interpreter runs as on a host with no JIT, as the image was made.
+	if (aica::arm::recompiler::ICache != nullptr && virtmem::jitDenied())
+	{
+		aica::arm::recompiler::term();
+		NOTICE_LOG(DYNAREC, "ARM7 recompiler released its executable memory: denied");
+	}
+	else if (aica::arm::recompiler::ICache == nullptr)
 	{
 		// No term(): it would only release a code cache, and there is none.
 		aica::arm::recompiler::init();
