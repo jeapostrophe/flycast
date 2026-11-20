@@ -742,6 +742,9 @@ static DynarecCodeEntryPtr install(const ImageBlock& b)
 	rbi->BlockType = BET_DynamicJump;
 	rbi->has_jcond = false;
 	unprotected_blocks++;	// its destructor's count
+	// bm_AddBlock puts CC_RW2RX(code) in the FPCB: an image has one mapping, so no offset (Init)
+	AOT_CHECK((const void *)CC_RW2RX(rbi->code) == (const void *)rbi->code,
+			"the code cache's offset %td moves the image's block at %08x", (ptrdiff_t)((const u8 *)CC_RW2RX(rbi->code) - (const u8 *)rbi->code), b.vaddr);
 	bm_AddBlock(rbi);
 	stats.installs++;
 	return rbi->code;
@@ -762,6 +765,9 @@ constexpr u32 FoldedDivisionBytes = 65 * 2;
 // By FPCB slot, as the JIT's block would be found: a jump to another mirror of the address it was
 // decoded at runs it as decoded there.
 static std::unordered_map<u32, InterpBlock> interpBlocks;
+// The blocks of the last resetCache, kept until the next miss: a handler runInterp runs can reset
+// the cache (an MMUCR write, CCN_MMUCR_write), and the block it is running must outlive that.
+static std::unordered_map<u32, InterpBlock> retiredInterpBlocks;
 
 static u32 fpcbSlot(u32 pc)
 {
@@ -925,6 +931,7 @@ static DynarecCodeEntryPtr runInterp(InterpBlock& e)
 
 DynarecCodeEntryPtr miss(u32 pc)
 {
+	retiredInterpBlocks.clear();	// no runInterp is running
 	AOT_CHECK(!mmu_enabled(), "the MMU is on: an AOT image is for games without it");
 	if (pc & 1)
 	{
@@ -932,12 +939,13 @@ DynarecCodeEntryPtr miss(u32 pc)
 		Do_Exception(pc, Sh4Ex_AddressErrorRead);
 		return (DynarecCodeEntryPtr)stub(StubDoInterrupts);
 	}
-	// rdv_CompilePC's, at the addresses where games load new code
-	if (rdv_IsCodeLoadAddress(pc))
-		Sh4Recompiler::Instance->ResetCache();
+	// A block the JIT would have compiled is found without compiling it again, so without the flush
 	auto interp = interpBlocks.find(fpcbSlot(pc));
 	if (interp != interpBlocks.end())
 		return runInterp(interp->second);
+	// rdv_CompilePC's, at the addresses where games load new code
+	if (rdv_IsCodeLoadAddress(pc))
+		Sh4Recompiler::Instance->ResetCache();
 	if (const ImageBlock *b = findBlock(pc))
 	{
 		if ((b->key & KEY_FPU) && Sh4cntx.sr.FD == 1)
@@ -976,7 +984,8 @@ DynarecCodeEntryPtr checkFailed(u32 addr)
 
 void resetCache()
 {
-	interpBlocks.clear();
+	retiredInterpBlocks.clear();
+	retiredInterpBlocks.swap(interpBlocks);
 }
 
 /**** Emit ****/
@@ -1203,6 +1212,7 @@ void beginInit()
 	active = cfg.mode;
 	admission = Unknown;
 	interpBlocks.clear();
+	retiredInterpBlocks.clear();
 	if (active == Off)
 		return;
 	buildImports();

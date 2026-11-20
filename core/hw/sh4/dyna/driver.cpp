@@ -392,13 +392,16 @@ void Sh4Recompiler::Init()
 	{
 		// No executable code cache. Load and Interp run the image's code once Run() admits it
 		// (aot::admit names its stubs); Emit compiles into plain memory it never runs, and exits.
+		// None of them has a second mapping, so no offset: a stock Init before this one (retro_init's,
+		// with the frontend's dual-mapped pool) left its pool's, and bm_AddBlock would add it to every
+		// installed block's code (aot::install checks).
+		cc_rx_offset = 0;
 #ifdef FEAT_SH4_AOT
 		if (aot::mode() == aot::Emit)
 		{
 			void *p = mmap(nullptr, FULL_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 			verify(p != MAP_FAILED);
 			CodeCache = (u8 *)p;
-			cc_rx_offset = 0;
 			TempCodeCache = CodeCache + CODE_SIZE;
 		}
 #endif
