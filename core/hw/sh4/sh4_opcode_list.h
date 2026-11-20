@@ -106,6 +106,7 @@ struct sh4_opcodelistentry
 };
 
 extern sh4_opcodelistentry* OpDesc[0x10000];
+size_t sh4_opcode_rows(const sh4_opcodelistentry **rows, const sh4_opcodelistentry **missing);
 
 void DissasembleOpcode(u16 opcode,u32 pc,char* Dissasm);
 enum DecParam

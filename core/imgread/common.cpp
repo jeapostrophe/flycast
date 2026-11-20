@@ -1,4 +1,5 @@
 #include "common.h"
+#include "rec-ARM64/aot_arm64.h"
 #include "hw/gdrom/gdromv3.h"
 #include "cfg/option.h"
 #include "stdclass.h"
@@ -104,11 +105,13 @@ static bool loadDisk(const std::string& path)
 
 	//try all drivers
 	std::vector<u8> digest;
-	disc = OpenDisc(path, config::GGPOEnable ? &digest : nullptr);
+	// an SH4 AOT image names its game by this digest too (rec-ARM64/aot_arm64.cpp)
+	const bool wantDigest = config::GGPOEnable || aot::wantsContentDigest();
+	disc = OpenDisc(path, wantDigest ? &digest : nullptr);
 
 	if (disc != NULL)
 	{
-		if (config::GGPOEnable)
+		if (wantDigest)
 			MD5Sum().add(digest)
 					.getDigest(settings.network.md5.game);
 		INFO_LOG(GDROM, "gdrom: Opened image \"%s\"", path.c_str());

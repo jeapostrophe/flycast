@@ -22,6 +22,16 @@
 //Called from ngen_FailedToFindBlock
 DynarecCodeEntryPtr DYNACALL rdv_FailedToFindBlock(u32 pc);
 DynarecCodeEntryPtr DYNACALL rdv_FailedToFindBlock_pc();
+// The SH4 AOT (rec-ARM64/aot_arm64.cpp). rdv_CompilePC resets the cache at these addresses, where
+// games load new code:
+bool rdv_IsCodeLoadAddress(u32 pc);
+// Discard the block at addr alone, and set the pc there to compile or install it again:
+void rdv_DiscardBlockAt(u32 addr);
+// Emit's: compile rbi at the main code buffer's offset `at` and return its code; the buffer's
+// start; the buffer's current offset (just past the stubs, before any block)
+void *rdv_CompileAt(RuntimeBlockInfo *rbi, u32 at);
+u8 *rdv_CodeBase();
+u32 rdv_CodeOffset();
 //Called when a block check failed, and the block needs to be invalidated
 DynarecCodeEntryPtr DYNACALL rdv_BlockCheckFail(u32 addr);
 //Called to compile code @pc
@@ -75,6 +85,10 @@ public:
 	void useTempBuffer(bool enable) { tempBuffer = enable; }
 	// Reset main or temp code buffer position to 0 (internal use)
 	void reset(bool temporary);
+	// The main buffer's position, and setting it back to one (the AOT emit, which compiles each
+	// block at the same place after the stubs)
+	u32 offset() const { return lastAddr; }
+	void rewindTo(u32 offset) { lastAddr = offset; }
 
 private:
 	u32 lastAddr = 0;

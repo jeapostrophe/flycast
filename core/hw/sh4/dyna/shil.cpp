@@ -166,6 +166,9 @@ static std::string dissasm_param(const shil_param& prm, bool comma)
 #if FEAT_SHREC != DYNAREC_NONE
 #define SHIL_MODE 3
 #include "shil_canonical.h"
+
+#define SHIL_MODE 5
+#include "shil_canonical.h"
 #endif
 
 std::string shil_opcode::dissasm() const

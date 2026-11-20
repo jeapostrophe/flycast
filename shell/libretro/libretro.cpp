@@ -49,6 +49,7 @@
 #include "rend/dx11/dx11context_lr.h"
 #endif
 #include "emulator.h"
+#include "rec-ARM64/aot_arm64.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_sched.h"
 #include "keyboard_map.h"
@@ -408,6 +409,50 @@ static void configureJitMemory()
 }
 #endif
 
+// retro-trainer HH-35: the SH4 AOT mode (rec-ARM64/aot_arm64.cpp). The Mac's tooling sets it in
+// the environment, FLYCAST_AOT=shape|emit|load|interp with FLYCAST_AOT_IMAGE, FLYCAST_AOT_LOG,
+// FLYCAST_AOT_CORRUPT and FLYCAST_AOT_CORE_UUID, which wins; otherwise the frontend's private
+// `rt_aot_image` option names the image a game runs in interp, and without it the stock
+// recompiler runs. The environment is read at retro_init too, before the recompilers ask for
+// executable memory, so an image mode's process never maps any.
+static bool configureAotFromEnv()
+{
+	const char *mode = getenv("FLYCAST_AOT");
+	if (mode == nullptr || !*mode)
+		return false;
+	const char *corrupt = getenv("FLYCAST_AOT_CORRUPT");
+	aot::configure(mode, getenv("FLYCAST_AOT_IMAGE"), getenv("FLYCAST_AOT_LOG"),
+			corrupt != nullptr ? (u32)strtoul(corrupt, nullptr, 0) : 0, getenv("FLYCAST_AOT_CORE_UUID"));
+	return true;
+}
+
+static void configureAot()
+{
+	if (configureAotFromEnv())
+		return;
+	struct retro_variable var = { "rt_aot_image", nullptr };
+	const bool image = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value != nullptr && *var.value;
+	aot::configure(image ? "interp" : nullptr, image ? var.value : nullptr, nullptr, 0, nullptr);
+}
+
+// The frontend's private command for what the core did with the image it named, and its argument
+// (retro-trainer's emulator.rs RT_ENVIRONMENT_AOT_OUTCOME, struct RtAotOutcome).
+#define RT_ENVIRONMENT_AOT_OUTCOME (RETRO_ENVIRONMENT_PRIVATE | 0x3601)
+struct rt_aot_outcome {
+	int admitted;
+	const char *detail;
+};
+
+static void reportAot()
+{
+	int admitted;
+	std::string detail;
+	if (!aot::takeReport(admitted, detail))
+		return;
+	rt_aot_outcome outcome{ admitted, detail.c_str() };
+	environ_cb(RT_ENVIRONMENT_AOT_OUTCOME, &outcome);
+}
+
 void retro_init()
 {
 	first_run = true;
@@ -460,6 +505,7 @@ void retro_init()
 	os_InstallFaultHandler();
 	MapleConfigMap::UpdateVibration = updateVibration;
 
+	configureAotFromEnv();
 #ifdef USE_FRONTEND_EXEC_MEM
 	// Before emu.init(): that is where the SH4 recompiler asks for its code
 	// cache. Every retro_init(), not only the first — emu.init() runs once per
@@ -1360,6 +1406,7 @@ void retro_run()
 #endif
 
 	video_cb(is_dupe ? 0 : RETRO_HW_FRAME_BUFFER_VALID, framebufferWidth, framebufferHeight, 0);
+	reportAot();
 
 	if (!config::ThreadedRendering || config::LimitFPS)
 		retro_audio_upload();
@@ -2247,6 +2294,7 @@ bool retro_load_game(const struct retro_game_info *game)
 	// Per-content VMU additions END
 
 	update_variables(true);
+	configureAot();
 
 	char *ext = strrchr(g_base_name, '.');
 

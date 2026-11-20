@@ -74,3 +74,6 @@ const u32 NullAddress = 0xFFFFFFFF;
 #define GetSImm8(str) ((s8)((str>>0) & 0xff))
 #define GetImm12(str) ((str>>0) & 0xfff)
 #define GetSImm12(str) (((short)((GetImm12(str))<<4))>>4)
+// Whether the block decoder folds the div0u or div0s `op` at pc, and the 64 rotcl/div1 after it,
+// into one division (shop_div32u/s and shop_div32p2), and its registers (reg_r0-relative)
+bool dec_FoldsDivision(u16 op, u32 pc, u32 regs[3]);

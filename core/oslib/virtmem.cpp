@@ -43,4 +43,16 @@ JitDeallocator getJitDeallocator()
 	return jitDeallocator;
 }
 
+static bool denied;
+
+void setJitDenied(bool d)
+{
+	denied = d;
+}
+
+bool jitDenied()
+{
+	return denied;
+}
+
 } // namespace virtmem

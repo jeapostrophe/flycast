@@ -1626,7 +1626,8 @@ if("arm64" IN_LIST ARCHITECTURE)
 		core/deps/vixl/pool-manager-impl.h
 		core/deps/vixl/utils-vixl.cc
 		core/deps/vixl/utils-vixl.h)
-	target_sources(${PROJECT_NAME} PRIVATE core/rec-ARM64/rec_arm64.cpp core/rec-ARM64/arm64_regalloc.h)
+	target_sources(${PROJECT_NAME} PRIVATE core/rec-ARM64/rec_arm64.cpp core/rec-ARM64/arm64_regalloc.h
+			core/rec-ARM64/aot_arm64.cpp core/rec-ARM64/aot_arm64.h)
 endif()
 if("x86" IN_LIST ARCHITECTURE OR "x86_64" IN_LIST ARCHITECTURE)
 	add_subdirectory(core/deps/xbyak EXCLUDE_FROM_ALL)

@@ -42,6 +42,11 @@ void setJitAllocator(JitAllocator alloc, JitDeallocator dealloc);
 JitAllocator getJitAllocator();
 // The installed deallocator, or nullptr.
 JitDeallocator getJitDeallocator();
+// While denied, prepare_jit_block() (POSIX) maps nothing and returns false, so each recompiler
+// falls back to its interpreter: the SH4 AOT image modes run the process as a host with no JIT
+// would (rec-ARM64/aot_arm64.cpp).
+void setJitDenied(bool denied);
+bool jitDenied();
 
 // Given a block of data in the .text section, prepares it for JIT action.
 // both code_area and size are page aligned. Returns success.

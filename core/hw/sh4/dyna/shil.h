@@ -4,6 +4,8 @@
 struct shil_opcode;
 typedef void shil_chfp(shil_opcode* op);
 extern shil_chfp* shil_chf[];
+// Every canonical implementation, as (shil op, its struct, its impl), in shil_canonical.h's order
+void shil_canonical_list(void (*add)(const char *op, const char *fn, void *impl, void *arg), void *arg);
 
 enum Sh4RegType
 {

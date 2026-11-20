@@ -20,10 +20,11 @@ Sh4Interpreter *Sh4Interpreter::Instance;
 
 void Sh4Interpreter::ExecuteOpcode(u16 op)
 {
-	if (ctx->sr.FD == 1 && OpDesc[op]->IsFloatingPoint())
+	if (ctx->sr.FD == 1 && OpDesc[op]->IsFloatingPoint() && !asRecompiled)
 		throw SH4ThrownException(ctx->pc - 2, Sh4Ex_FpuDisabled);
 	OpPtr[op](ctx, op);
-	sh4cycles.executeCycles(op);
+	if (!asRecompiled)
+		sh4cycles.executeCycles(op);
 }
 
 u16 Sh4Interpreter::ReadNexOp()

@@ -300,24 +300,31 @@ void UnwindInfo::endProlog(u32 offset)
 
 size_t UnwindInfo::end(u32 offset, ptrdiff_t rwRxOffset)
 {
+	u8 *endAddr = startAddr + offset;
+	// 16 bytes alignment
+	if ((uintptr_t)endAddr & 0xf)
+		offset += 16 - ((uintptr_t)endAddr & 0xf);
+	u8 *unwindInfoDest = startAddr + offset;
+	size_t size = endAt(unwindInfoDest, (u32)(endAddr - startAddr), rwRxOffset);
+
+	return (unwindInfoDest + size) - endAddr;
+}
+
+size_t UnwindInfo::endAt(u8 *unwindInfoDest, u32 codeSize, ptrdiff_t rwRxOffset)
+{
 	ByteStream unwindInfo;
 	writeCIE(unwindInfo, cieInstructions, dwarfRegRAId);
 	u32 functionStart;
 	writeFDE(unwindInfo, fdeInstructions, 0, functionStart);
 	write<u32>(unwindInfo, 0);
 
-	u8 *endAddr = startAddr + offset;
-	// 16 bytes alignment
-	if ((uintptr_t)endAddr & 0xf)
-		offset += 16 - ((uintptr_t)endAddr & 0xf);
-	u8 *unwindInfoDest = startAddr + offset;
 	memcpy(unwindInfoDest, &unwindInfo[0], unwindInfo.size());
 
 	if (!unwindInfo.empty())
 	{
 		uintptr_t *unwindfuncaddr = (uintptr_t *)(unwindInfoDest + functionStart);
 		unwindfuncaddr[0] = (uintptr_t)startAddr + rwRxOffset;
-		unwindfuncaddr[1] = (ptrdiff_t)(endAddr - startAddr);
+		unwindfuncaddr[1] = (ptrdiff_t)codeSize;
 
 // Android NDK 23 switched to using clang's unwind instead of gcc
 #if defined(__llvm__) && (!defined(__NDK_MAJOR__) || __NDK_MAJOR__ >= 23 || HOST_CPU == CPU_ARM)
@@ -360,9 +367,9 @@ size_t UnwindInfo::end(u32 offset, ptrdiff_t rwRxOffset)
 		registeredFrames.push_back(unwindInfoDest);
 #endif
 	}
-	DEBUG_LOG(DYNAREC, "RegisterFrame %p sz %d tables: %d", startAddr, (u32)(endAddr - startAddr), (u32)registeredFrames.size());
+	DEBUG_LOG(DYNAREC, "RegisterFrame %p sz %d tables: %d", startAddr, codeSize, (u32)registeredFrames.size());
 
-	return (unwindInfoDest + unwindInfo.size()) - endAddr;
+	return unwindInfo.size();
 }
 
 void UnwindInfo::clear()

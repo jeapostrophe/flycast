@@ -17,6 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "emulator.h"
+#include "rec-ARM64/aot_arm64.h"
 #include "types.h"
 #include "stdclass.h"
 #include "cfg/option.h"
@@ -524,7 +525,9 @@ void Emulator::retryRecompilers()
 {
 #if FEAT_SHREC != DYNAREC_NONE
 	Sh4Recompiler *sh4rec = static_cast<Sh4Recompiler *>(recompiler);
-	if (!sh4rec->hasCodeCache())
+	// or the SH4 AOT mode this game is configured for is not the one Init set up for (an image
+	// mode needs no code cache at all: rec-ARM64/aot_arm64.cpp)
+	if (!sh4rec->hasCodeCache() || aot::configured() != aot::mode())
 	{
 #ifdef LIBRETRO
 		// Init() overrides DynarecEnabled off when it gets no memory; drop the
@@ -544,8 +547,9 @@ void Emulator::retryRecompilers()
 		// re-point it too — first, since the recompiler's own Init() ends by
 		// generating code against the context it just re-read.
 		interpreter->Init();
-		// Term() has no code cache to release here; it is the other half of the
-		// bm_Init()/Sh4Interpreter::Init() that Init() opens with.
+		// Term() releases the code cache, if there is one (an SH4 AOT mode change finds
+		// one), and is the other half of the bm_Init()/Sh4Interpreter::Init() that Init()
+		// opens with.
 		sh4rec->Term();
 		sh4rec->Init();
 		NOTICE_LOG(DYNAREC, "SH4 recompiler asked for executable memory again: %s",

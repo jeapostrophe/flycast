@@ -16,6 +16,7 @@
 #include "hw/sh4/sh4_sched.h"
 #include "hw/sh4/modules/mmu.h"
 #include "oslib/virtmem.h"
+#include "rec-ARM64/aot_arm64.h"
 
 #if defined(__unix__) && defined(DYNA_OPROF)
 #include <opagent.h>
@@ -431,8 +432,9 @@ void RuntimeBlockInfo::Discard()
 
 void RuntimeBlockInfo::SetProtectedFlags()
 {
-	// Don't write protect rom and BIOS/IP.BIN (Grandia II)
-	if (!IsOnRam(addr) || (addr & 0x1FFF0000) == 0x0c000000)
+	// Don't write protect rom and BIOS/IP.BIN (Grandia II); nor an AOT-shaped block, which
+	// checks its own bytes at each entry, as it would run from an image
+	if (!IsOnRam(addr) || (addr & 0x1FFF0000) == 0x0c000000 || aot::shaped())
 	{
 		this->read_only = false;
 		unprotected_blocks++;

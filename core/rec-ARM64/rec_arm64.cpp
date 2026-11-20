@@ -44,6 +44,7 @@ using namespace vixl::aarch64;
 #include "hw/mem/addrspace.h"
 #include "oslib/virtmem.h"
 #include "emulator.h"
+#include "aot_arm64.h"
 
 struct DynaRBI : RuntimeBlockInfo
 {
@@ -74,6 +75,58 @@ static DynaCode *linkBlockBranchStub;
 static DynaCode *linkBlockNextStub;
 static DynaCode *writeStoreQueue32;
 static DynaCode *writeStoreQueue64;
+
+// The mainloop's frame as its prologue below saves it, for the whole code area: an exception can
+// only be thrown by a called function, so the prologue's own instructions need no rows of their
+// own (every row is at offset 0). An AOT image's code is described the same way (aot_arm64.cpp).
+void describeMainloopFrame(Arm64UnwindInfo& unwinder)
+{
+	unwinder.allocStack(0, 160);
+	unwinder.saveReg(0, x19, 160);
+	unwinder.saveReg(0, x20, 152);
+	unwinder.saveReg(0, x21, 144);
+	unwinder.saveReg(0, x22, 136);
+	unwinder.saveReg(0, x23, 128);
+	unwinder.saveReg(0, x24, 120);
+	unwinder.saveReg(0, x25, 112);
+	unwinder.saveReg(0, x26, 104);
+	unwinder.saveReg(0, x27, 96);
+	unwinder.saveReg(0, x28, 88);
+	unwinder.saveReg(0, d14, 80);
+	unwinder.saveReg(0, d15, 72);
+	unwinder.saveReg(0, d8, 64);
+	unwinder.saveReg(0, d9, 56);
+	unwinder.saveReg(0, d10, 48);
+	unwinder.saveReg(0, d11, 40);
+	unwinder.saveReg(0, d12, 32);
+	unwinder.saveReg(0, d13, 24);
+	unwinder.saveReg(0, x29, 16);
+	unwinder.saveReg(0, x30, 8);
+}
+
+// The functions AOT-shaped code calls, by name: listed here because the code takes their addresses
+// here (addrspace's sign-extending readers are static inline, one copy per translation unit).
+void aotHelperImports(void (*add)(const char *name, const void *ptr))
+{
+#define AOT_IMPORT(f) add(#f, (const void *)&f)
+	AOT_IMPORT(UpdateSR);
+	AOT_IMPORT(Sh4Context::UpdateFPSCR);
+	AOT_IMPORT(UpdateINTC);
+	AOT_IMPORT(UpdateSystem_INTC);
+	AOT_IMPORT(Do_Exception);
+	AOT_IMPORT(addrspace::read8SX32);
+	AOT_IMPORT(addrspace::read16SX32);
+	AOT_IMPORT(addrspace::read32);
+	AOT_IMPORT(addrspace::read64);
+	AOT_IMPORT(addrspace::write8);
+	AOT_IMPORT(addrspace::write16);
+	AOT_IMPORT(addrspace::write32);
+	AOT_IMPORT(addrspace::write64);
+	AOT_IMPORT(rdv_FailedToFindBlock);
+	AOT_IMPORT(rdv_BlockCheckFail);
+	AOT_IMPORT(rdv_LinkBlock);
+#undef AOT_IMPORT
+}
 
 static void jitWriteProtect(Sh4CodeBuffer &codeBuffer, bool enable)
 {
@@ -298,7 +351,10 @@ public:
 
 				Mov(x0, x28);
 				Mov(w1, op.rs3._imm);
-				if (!mmu_enabled())
+				if (aot::shaped())
+					// by its opcode table row: one import per row, the same on every build
+					CallImport(aot::slotOfOpcode(op.rs3._imm));
+				else if (!mmu_enabled())
 				{
 					GenCallRuntime(OpDesc[op.rs3._imm]->oph);
 				}
@@ -898,7 +954,10 @@ public:
 				break;
 
 			case shop_fsca:
-				Mov(x1, reinterpret_cast<uintptr_t>(&sin_table));
+				if (aot::shaped())
+					LoadImport(x1, aot::slotOf(&sin_table));
+				else
+					Mov(x1, reinterpret_cast<uintptr_t>(&sin_table));
 				if (op.rs1.is_reg())
 					Add(x1, x1, Operand(regalloc.MapRegister(op.rs1), UXTH, 3));
 				else
@@ -1059,11 +1118,17 @@ public:
 			case CPT_ptr:
 				verify(prm.is_reg());
 				// push the ptr itself
-				Mov(*call_regs64[regused++], reinterpret_cast<uintptr_t>(prm.reg_ptr(sh4ctx)));
+				if (aot::shaped())
+					Add(*call_regs64[regused++], x28, (u8 *)prm.reg_ptr(sh4ctx) - (u8 *)&sh4ctx);
+				else
+					Mov(*call_regs64[regused++], reinterpret_cast<uintptr_t>(prm.reg_ptr(sh4ctx)));
 				break;
 
 			case CPT_sh4ctx:
-				Mov(*call_regs64[regused++], reinterpret_cast<uintptr_t>(&sh4ctx));
+				if (aot::shaped())
+					Mov(*call_regs64[regused++], x28);
+				else
+					Mov(*call_regs64[regused++], reinterpret_cast<uintptr_t>(&sh4ctx));
 				break;
 
 			case CPT_u32rv:
@@ -1171,7 +1236,8 @@ public:
 		case BET_StaticCall:
 			// next_pc = block->BranchBlock;
 #ifndef NO_BLOCK_LINKING
-			if (block->pBranchBlock != NULL)
+			// an AOT-shaped block is never linked: it takes the unlinked exit
+			if (!aot::shaped() && block->pBranchBlock != NULL)
 			{
 				GenBranch((DynaCode *)block->pBranchBlock->code);
 				Nop();
@@ -1179,7 +1245,7 @@ public:
 			}
 			else
 			{
-				if (!mmu_enabled())
+				if (!mmu_enabled() && !aot::shaped())
 				{
 					GenCall(linkBlockGenericStub);
 					Nop();
@@ -1215,7 +1281,7 @@ public:
 
 				B(ne, &branch_not_taken);
 #ifndef NO_BLOCK_LINKING
-				if (block->pBranchBlock != NULL)
+				if (!aot::shaped() && block->pBranchBlock != NULL)
 				{
 					GenBranch((DynaCode *)block->pBranchBlock->code);
 					Nop();
@@ -1223,7 +1289,7 @@ public:
 				}
 				else
 				{
-					if (!mmu_enabled())
+					if (!mmu_enabled() && !aot::shaped())
 					{
 						GenCall(linkBlockBranchStub);
 						Nop();
@@ -1243,7 +1309,7 @@ public:
 				Bind(&branch_not_taken);
 
 #ifndef NO_BLOCK_LINKING
-				if (block->pNextBlock != NULL)
+				if (!aot::shaped() && block->pNextBlock != NULL)
 				{
 					GenBranch((DynaCode *)block->pNextBlock->code);
 					Nop();
@@ -1251,7 +1317,7 @@ public:
 				}
 				else
 				{
-					if (!mmu_enabled())
+					if (!mmu_enabled() && !aot::shaped())
 					{
 						GenCall(linkBlockNextStub);
 						Nop();
@@ -1333,7 +1399,11 @@ public:
 			block->host_code_size = GetBuffer()->GetSizeInBytes();
 			block->host_opcodes = GetLabelAddress<u32*>(&code_end) - GetBuffer()->GetStartAddress<u32*>();
 
-			codeBuffer.advance(block->host_code_size);
+			if (aot::shaped())
+				// every block starts as it will in an image, so its literal pool lands the same
+				codeBuffer.advance(aot::alignBlock(block->host_code_size));
+			else
+				codeBuffer.advance(block->host_code_size);
 		}
 
 		// Flush and invalidate caches
@@ -1391,6 +1461,8 @@ public:
 
 		Ldr(w0, MemOperand(x28, offsetof(Sh4Context, CpuRunning)));
 		Cbz(w0, &end_mainloop);
+		Label dispatch;		// next_pc's block, the emulator running or not, as a dynamic exit goes
+		Bind(&dispatch);
 		if (!mmu_enabled())
 		{
 			Sub(x2, x28, offsetof(Sh4RCB, cntx));
@@ -1415,39 +1487,19 @@ public:
 		// unwinding instructions everywhere. This isn't true until the end of the following prolog, but exceptions
 		// can only be thrown by called functions so this is good enough.
 		unwinder.start(codeBuffer.getBase());
+		describeMainloopFrame(unwinder);
 
 		// Save registers
 		Stp(x19, x20, MemOperand(sp, -160, PreIndex));
-		unwinder.allocStack(0, 160);
-		unwinder.saveReg(0, x19, 160);
-		unwinder.saveReg(0, x20, 152);
 		Stp(x21, x22, MemOperand(sp, 16));
-		unwinder.saveReg(0, x21, 144);
-		unwinder.saveReg(0, x22, 136);
 		Stp(x23, x24, MemOperand(sp, 32));
-		unwinder.saveReg(0, x23, 128);
-		unwinder.saveReg(0, x24, 120);
 		Stp(x25, x26, MemOperand(sp, 48));
-		unwinder.saveReg(0, x25, 112);
-		unwinder.saveReg(0, x26, 104);
 		Stp(x27, x28, MemOperand(sp, 64));
-		unwinder.saveReg(0, x27, 96);
-		unwinder.saveReg(0, x28, 88);
 		Stp(d14, d15, MemOperand(sp, 80));
-		unwinder.saveReg(0, d14, 80);
-		unwinder.saveReg(0, d15, 72);
 		Stp(d8, d9, MemOperand(sp, 96));
-		unwinder.saveReg(0, d8, 64);
-		unwinder.saveReg(0, d9, 56);
 		Stp(d10, d11, MemOperand(sp, 112));
-		unwinder.saveReg(0, d10, 48);
-		unwinder.saveReg(0, d11, 40);
 		Stp(d12, d13, MemOperand(sp, 128));
-		unwinder.saveReg(0, d12, 32);
-		unwinder.saveReg(0, d13, 24);
 		Stp(x29, x30, MemOperand(sp, 144));
-		unwinder.saveReg(0, x29, 16);
-		unwinder.saveReg(0, x30, 8);
 
 		Sub(x0, x0, sizeof(Sh4Context));
 		Label reenterLabel;
@@ -1469,6 +1521,9 @@ public:
 		{
 			// Use x28 as sh4 context pointer
 			Mov(x28, x0);
+			if (aot::shaped())
+				// mainloop(context, imports): an AOT-shaped block reaches everything through x27
+				Mov(x27, x1);
 		}
 		Label do_interrupts;
 
@@ -1494,6 +1549,16 @@ public:
 		Bind(&do_interrupts);
 		Ldr(w29, sh4_context_mem_operand(&sh4ctx.pc));
 		B(&no_update);
+
+		// AOT-shaped: where a block the image lacks, interpreted, continues when it left by a
+		// dynamic exit (aot_arm64.cpp runInterp)
+		Label do_dispatch;
+		if (aot::shaped())
+		{
+			Bind(&do_dispatch);
+			Ldr(w29, sh4_context_mem_operand(&sh4ctx.pc));
+			B(&dispatch);
+		}
 
 		Bind(&end_mainloop);
 		if (mmu_enabled())
@@ -1599,7 +1664,14 @@ public:
 		Ret();
 
 		FinalizeCode();
-		codeBuffer.advance(GetBuffer()->GetSizeInBytes());
+		if (aot::shaped())
+		{
+			aot::stubsGenerated(GetBuffer()->GetStartAddress<u8 *>(), (u32)GetBuffer()->GetSizeInBytes());
+			// the first block starts aligned, as every later one does
+			codeBuffer.advance(aot::alignBlock((u32)GetBuffer()->GetSizeInBytes()));
+		}
+		else
+			codeBuffer.advance(GetBuffer()->GetSizeInBytes());
 
 		size_t unwindSize = unwinder.end(codeBuffer.getSize() - 128, (ptrdiff_t)CC_RW2RX(0));
 		verify(unwindSize <= 128);
@@ -1607,6 +1679,17 @@ public:
 		arm64_no_update = GetLabelAddress<DynaCode *>(&no_update);
 		handleException = (void (*)())CC_RW2RX(GetLabelAddress<uintptr_t>(&handleExceptionLabel));
 		blockCheckFail = GetLabelAddress<DynaCode *>(&blockCheckFailLabel);
+		if (aot::shaped())
+		{
+			aot::setStub(aot::StubMainloop, (void *)::mainloop);	// already the RX address
+			aot::setStub(aot::StubNoUpdate, CC_RW2RX(arm64_no_update));
+			aot::setStub(aot::StubIntcSched, CC_RW2RX(arm64_intc_sched));
+			aot::setStub(aot::StubMiss, (void *)ngen_FailedToFindBlock);
+			aot::setStub(aot::StubDoInterrupts, CC_RW2RX(GetLabelAddress<void *>(&do_interrupts)));
+			aot::setStub(aot::StubEndMainloop, CC_RW2RX(GetLabelAddress<void *>(&end_mainloop)));
+			aot::setStub(aot::StubBlockCheckFail, CC_RW2RX(blockCheckFail));
+			aot::setStub(aot::StubDoDispatch, CC_RW2RX(GetLabelAddress<void *>(&do_dispatch)));
+		}
 		writeStoreQueue32 = GetLabelAddress<DynaCode *>(&writeStoreQueue32Label);
 		writeStoreQueue64 = GetLabelAddress<DynaCode *>(&writeStoreQueue64Label);
 
@@ -1631,9 +1714,36 @@ private:
 	// Runtime branches/calls need to be adjusted if rx space is different to rw space.
 	// Therefore can't mix GenBranch with GenBranchRuntime!
 
+	// AOT-shaped code reaches every host address through the import table x27 holds
+	void LoadImport(const Register& reg, u32 slot)
+	{
+		Ldr(reg, MemOperand(x27, slot * 8));
+	}
+
+	void CallImport(u32 slot)
+	{
+		LoadImport(x4, slot);
+		Blr(x4);
+	}
+
+	void BranchImport(u32 slot, Condition cond)
+	{
+		Label skip_target;
+		if (cond != al)
+			B(&skip_target, (Condition)((u32)cond ^ 1));
+		LoadImport(x4, slot);
+		Br(x4);
+		Bind(&skip_target);
+	}
+
 	template <typename R, typename... P>
 	void GenCallRuntime(R (*function)(P...))
 	{
+		if (aot::shaped())
+		{
+			CallImport(aot::slotOf((const void *)function));
+			return;
+		}
 		ptrdiff_t offset = reinterpret_cast<uintptr_t>(function) - reinterpret_cast<uintptr_t>(CC_RW2RX(GetBuffer()->GetStartAddress<void*>()));
 		verify((offset & 3) == 0);
 		if (offset < -128 * 1024 * 1024 || offset > 128 * 1024 * 1024)
@@ -1649,8 +1759,27 @@ private:
 		}
 	}
 
+	// An AOT-shaped block reaches a stub through the import table, so its bytes do not depend on
+	// where it sits relative to the stubs.
+	u32 stubSlot(DynaCode *code)
+	{
+		if (code == arm64_intc_sched)
+			return aot::slotOfStub(aot::StubIntcSched);
+		if (code == arm64_no_update)
+			return aot::slotOfStub(aot::StubNoUpdate);
+		if (code == blockCheckFail)
+			return aot::slotOfStub(aot::StubBlockCheckFail);
+		die("an AOT-shaped block reaches a stub that has no import");
+		return 0;
+	}
+
 	void GenCall(DynaCode *function)
 	{
+		if (aot::shaped())
+		{
+			CallImport(stubSlot(function));
+			return;
+		}
 		ptrdiff_t offset = reinterpret_cast<uintptr_t>(function) - GetBuffer()->GetStartAddress<uintptr_t>();
 		verify(offset >= -128 * 1024 * 1024 && offset <= 128 * 1024 * 1024);
 		verify((offset & 3) == 0);
@@ -1662,6 +1791,11 @@ private:
    template <typename R, typename... P>
 	void GenBranchRuntime(R (*target)(P...), Condition cond = al)
 	{
+		if (aot::shaped())
+		{
+			BranchImport(aot::slotOf((const void *)target), cond);
+			return;
+		}
 		ptrdiff_t offset = reinterpret_cast<uintptr_t>(target) - reinterpret_cast<uintptr_t>(CC_RW2RX(GetBuffer()->GetStartAddress<void*>()));
 		verify((offset & 3) == 0);
 		if (offset < -128 * 1024 * 1024 || offset > 128 * 1024 * 1024)
@@ -1695,6 +1829,11 @@ private:
 
 	void GenBranch(DynaCode *code, Condition cond = al)
 	{
+		if (aot::shaped())
+		{
+			BranchImport(stubSlot(code), cond);
+			return;
+		}
 		ptrdiff_t offset = reinterpret_cast<uintptr_t>(code) - GetBuffer()->GetStartAddress<uintptr_t>();
 		verify(offset >= -128 * 1024 * 1024 && offset < 128 * 1024 * 1024);
 		verify((offset & 3) == 0);
@@ -1735,7 +1874,8 @@ private:
 		GenMemAddr(op, &w0);
 		genMmuLookup(op, 0);
 
-		if (!optimise || !GenReadMemoryFast(op, opid))
+		// AOT-shaped: never a fast access, which a fault would rewrite in place
+		if (!optimise || aot::shaped() || !GenReadMemoryFast(op, opid))
 			GenReadMemorySlow(op.size);
 
 		if (op.size < 8)
@@ -1753,10 +1893,13 @@ private:
 		u32 addr;
 		if (!rdv_readMemImmediate(op.rs1._imm, op.size, ptr, isram, addr, block))
 			return false;
+		if (aot::shaped() && !aotRamPointer(addr, op.size, x1))
+			return false;
 
 		if (isram)
 		{
-			Ldr(x1, reinterpret_cast<uintptr_t>(ptr));	// faster than Mov
+			if (!aot::shaped())
+				Ldr(x1, reinterpret_cast<uintptr_t>(ptr));	// faster than Mov
 			if (regalloc.IsAllocAny(op.rd))
 			{
 				switch (op.size)
@@ -1921,7 +2064,7 @@ private:
 			shil_param_to_host_reg(op.rs2, w1);
 		else
 			shil_param_to_host_reg(op.rs2, x1);
-		if (optimise && GenWriteMemoryFast(op, opid))
+		if (optimise && !aot::shaped() && GenWriteMemoryFast(op, opid))
 			return;
 
 		GenWriteMemorySlow(op.size);
@@ -1936,6 +2079,8 @@ private:
 		bool isram;
 		u32 addr;
 		if (!rdv_writeMemImmediate(op.rs1._imm, op.size, ptr, isram, addr, block))
+			return false;
+		if (aot::shaped() && !(isram && GetMemPtr(addr, op.size) != nullptr))
 			return false;
 
 		if (isram)
@@ -1963,7 +2108,10 @@ private:
 			else
 				die("Invalid rs2 param");
 
-			Ldr(x0, reinterpret_cast<uintptr_t>(ptr));
+			if (aot::shaped())
+				aotRamPointer(addr, op.size, x0);
+			else
+				Ldr(x0, reinterpret_cast<uintptr_t>(ptr));
 			switch (op.size)
 			{
 			case 1:
@@ -2051,6 +2199,19 @@ private:
 		return true;
 	}
 
+	// AOT-shaped: reg = the host address of area-3 RAM at guest addr, as mem_b's import plus the
+	// offset, the same on a host with or without the virtual memory views. False (nothing
+	// emitted) when addr is not area-3 RAM, which a block then reaches through the handlers.
+	bool aotRamPointer(u32 addr, u32 size, const Register& reg)
+	{
+		u8 *ptr = GetMemPtr(addr, size);
+		if (ptr == nullptr)
+			return false;
+		LoadImport(reg, aot::slotOf(&mem_b[0]));
+		Add(reg, reg, ptr - &mem_b[0]);
+		return true;
+	}
+
 	void EnsureCodeSize(Instruction *start_instruction, int code_size)
 	{
 		while (GetCursorAddress<Instruction *>() - start_instruction < code_size * kInstructionSize)
@@ -2078,7 +2239,10 @@ private:
 		u8* ptr = GetMemPtr(block->addr, sz);
 		if (ptr != NULL)
 		{
-			Ldr(x9, reinterpret_cast<uintptr_t>(ptr));
+			if (aot::shaped())
+				aotRamPointer(block->addr, sz, x9);
+			else
+				Ldr(x9, reinterpret_cast<uintptr_t>(ptr));
 
 			while (sz > 0)
 			{
@@ -2226,7 +2390,10 @@ public:
 
 	void reset() override
 	{
-		unwinder.clear();
+		unwinder.clear();	// a code cache Term released may have held them
+		if (aot::imageOnly())
+			// the mainloop is the image's, and nothing was written to regenerate
+			return;
 		::mainloop = nullptr;
 
 		if (sh4ctx->CpuRunning)
@@ -2244,9 +2411,15 @@ public:
 		try {
 			do {
 				restarting = false;
-				generate_mainloop();
+				if (aot::imageOnly())
+					::mainloop = (void (*)(void *))aot::stub(aot::StubMainloop);
+				else
+					generate_mainloop();
 
-				::mainloop(v_cntx);
+				if (aot::shaped())
+					((void (*)(void *, void **))::mainloop)(v_cntx, aot::imports());
+				else
+					::mainloop(v_cntx);
 				if (restarting && !emu.restartCpu())
 					restarting = false;
 			} while (restarting);
@@ -2302,7 +2475,8 @@ public:
 
 	RuntimeBlockInfo* allocateBlock() override
 	{
-		generate_mainloop();
+		if (!aot::imageOnly())
+			generate_mainloop();
 		return new DynaRBI(*sh4ctx, *codeBuffer);
 	}
 
@@ -2401,6 +2575,8 @@ static Arm64Dynarec instance;
 u32 DynaRBI::Relink()
 {
 #ifndef NO_BLOCK_LINKING
+	if (aot::shaped())
+		return 0;
 	//printf("DynaRBI::Relink %08x\n", this->addr);
 	jitWriteProtect(codeBuffer, false);
 	Arm64Assembler *compiler = new Arm64Assembler(sh4ctx, codeBuffer, (u8 *)this->code + this->relink_offset);

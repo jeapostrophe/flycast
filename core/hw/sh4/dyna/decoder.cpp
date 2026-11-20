@@ -639,6 +639,17 @@ static bool MatchDiv32s(u32 op,u32 pc)
 	return match == 65;
 }
 
+// decoder.h; DM_DIV0's own test (the SH4 AOT interp runs a folded division as the recompiler does:
+// rec-ARM64/aot_arm64.cpp)
+bool dec_FoldsDivision(u16 op, u32 pc, u32 regs[3])
+{
+	bool folds = op == 0x0019 ? MatchDiv32u(op, pc) : (op & 0xf00f) == 0x2007 ? MatchDiv32s(op, pc) : false;
+	regs[0] = div_som_reg1;	// the dividend's low word, then the quotient
+	regs[1] = div_som_reg2;	// the divisor
+	regs[2] = div_som_reg3;	// the dividend's high word, then the remainder
+	return folds;
+}
+
 static bool dec_generic(u32 op)
 {
 	DecMode mode;DecParam d;DecParam s;shilop natop;u32 e;

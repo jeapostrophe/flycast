@@ -248,6 +248,8 @@ void create_mappings(const Mapping *vmem_maps, unsigned nummaps) {
 // Prepares the code region for JIT operations, thus marking it as RWX
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rwx)
 {
+	if (jitDenied())
+		return false;
     // Try to map is as RWX, this fails apparently on OSX (and perhaps other systems?)
 	if (code_area != nullptr && region_set_exec(code_area, size))
     {
@@ -290,6 +292,8 @@ void release_jit_block(void *code_area, size_t size)
 // Use two addr spaces: need to remap something twice, therefore use allocate_shared_filemem()
 bool prepare_jit_block(void *code_area, size_t size, void **code_area_rw, ptrdiff_t *rx_offset)
 {
+	if (jitDenied())
+		return false;
 	JitAllocator allocator = getJitAllocator();
 	if (allocator != nullptr)
 	{

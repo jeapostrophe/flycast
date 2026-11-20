@@ -6,6 +6,8 @@
 	SHIL_MODE == 2) Shil opcode classes declaration
 	SHIL_MODE == 3) The routing table for canonical implementations
 	SHIL_MODE == 4) opcode name list (for logging/disass)
+	SHIL_MODE == 5) shil_canonical_list(): every canonical implementation with its names
+	                (the SH4 AOT import table, rec-ARM64/aot_arm64.cpp)
 */
 
 #define fsca_impl fsca_table
@@ -75,13 +77,23 @@
 
 	#define shil_canonical(rv,name,args,code)
 	#define shil_compile(code)
+#elif SHIL_MODE==5
+//list the canonical implementations (after mode 1 defined them)
+	#define SHIL_START void shil_canonical_list(void (*add)(const char *op, const char *fn, void *impl, void *arg), void *arg) {
+	#define SHIL_END }
+
+	#define shil_opc(name) { using opcl_ [[maybe_unused]] = shil_opcl_##name; const char *opname_ = #name;
+	#define shil_opc_end() (void)opname_; }
+
+	#define shil_canonical(rv,name,args,code) add(opname_, #name, (void *)&opcl_::name::impl, arg);
+	#define shil_compile(code)
 #else
 #error Invalid SHIL_MODE
 #endif
 
 
 
-#if SHIL_MODE==1 || SHIL_MODE==2
+#if SHIL_MODE==1 || SHIL_MODE==2 || SHIL_MODE==5
 //only in structs we use the code :)
 #include <cmath>
 #include "types.h"

@@ -17,6 +17,9 @@ public:
 	void allocStack(u32 offset, int size);
 	void endProlog(u32 offset);
 	size_t end(u32 offset, ptrdiff_t rwRxOffset = 0);
+	// end() for code of codeSize bytes at start()'s address, written to dest (which outlives the
+	// registration) rather than after the code; returns its size
+	size_t endAt(u8 *dest, u32 codeSize, ptrdiff_t rwRxOffset = 0);
 
 	void clear();
 	void allocStackPtr(const void *address, int size) {
@@ -59,6 +62,9 @@ inline void UnwindInfo::allocStack(u32 offset, int size) {
 inline void UnwindInfo::endProlog(u32 offset) {
 }
 inline size_t UnwindInfo::end(u32 offset, ptrdiff_t rwRxOffset) {
+	return 0;
+}
+inline size_t UnwindInfo::endAt(u8 *dest, u32 codeSize, ptrdiff_t rwRxOffset) {
 	return 0;
 }
 inline void UnwindInfo::clear() {

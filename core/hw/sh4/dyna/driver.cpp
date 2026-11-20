@@ -13,6 +13,10 @@
 #include "decoder.h"
 #include "oslib/virtmem.h"
 #include "cfg/option.h"
+#include "rec-ARM64/aot_arm64.h"
+#ifdef FEAT_SH4_AOT
+#include <sys/mman.h>
+#endif
 
 #if FEAT_SHREC != DYNAREC_NONE
 
@@ -94,6 +98,8 @@ void Sh4Recompiler::clear_temp_cache(bool full)
 void Sh4Recompiler::ResetCache()
 {
 	INFO_LOG(DYNAREC, "recSh4:Dynarec Cache clear at %08X free space %d", getContext()->pc, codeBuffer.getFreeSpace());
+	if (aot::imageOnly())
+		aot::resetCache();
 	codeBuffer.reset(false);
 	bm_ResetCache();
 	smc_hotspots.clear();
@@ -102,6 +108,12 @@ void Sh4Recompiler::ResetCache()
 
 void Sh4Recompiler::Run()
 {
+	if (aot::shaped() && !aot::admit())
+	{
+		// the image was refused: the interpreter runs this game instead
+		super::Run();
+		return;
+	}
 	getContext()->restoreHostRoundingMode();
 
 	u8 *sh4_dyna_rcb = (u8 *)getContext() + sizeof(Sh4Context);
@@ -168,11 +180,16 @@ bool RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
 	return true;
 }
 
+bool rdv_IsCodeLoadAddress(u32 pc)
+{
+	return pc == 0x8c0000e0 || pc == 0xac010000 || pc == 0xac008300;
+}
+
 DynarecCodeEntryPtr rdv_CompilePC(u32 blockcheck_failures)
 {
 	const u32 pc = Sh4cntx.pc;
 
-	if (codeBuffer.getFreeSpace() < 32_KB || pc == 0x8c0000e0 || pc == 0xac010000 || pc == 0xac008300)
+	if (codeBuffer.getFreeSpace() < 32_KB || rdv_IsCodeLoadAddress(pc))
 		Sh4Recompiler::Instance->ResetCache();
 
 	RuntimeBlockInfo* rbi = sh4Dynarec->allocateBlock();
@@ -196,6 +213,8 @@ DynarecCodeEntryPtr rdv_CompilePC(u32 blockcheck_failures)
 	bool block_check = !rbi->read_only;
 	sh4Dynarec->compile(rbi, block_check, do_opts);
 	verify(rbi->code != nullptr);
+	if (aot::shaped())
+		aot::blockCompiled(rbi);
 
 	bm_AddBlock(rbi);
 
@@ -213,6 +232,8 @@ DynarecCodeEntryPtr DYNACALL rdv_FailedToFindBlock(u32 pc)
 {
 	//DEBUG_LOG(DYNAREC, "rdv_FailedToFindBlock %08x", pc);
 	Sh4cntx.pc=pc;
+	if (aot::imageOnly())
+		return aot::miss(pc);
 	DynarecCodeEntryPtr code = rdv_CompilePC(0);
 	if (code == NULL)
 		code = bm_GetCodeByVAddr(Sh4cntx.pc);
@@ -232,7 +253,12 @@ DynarecCodeEntryPtr DYNACALL rdv_BlockCheckFail(u32 addr)
 {
 	DEBUG_LOG(DYNAREC, "rdv_BlockCheckFail @ %08x", addr);
 	u32 blockcheck_failures = 0;
-	if (mmu_enabled())
+	if (aot::imageOnly())
+		return aot::checkFailed(addr);
+	if (aot::shaped())
+		// Only the block whose bytes changed goes, the same block an AOT image's run discards.
+		rdv_DiscardBlockAt(addr);
+	else if (mmu_enabled())
 	{
 		RuntimeBlockInfoPtr block = bm_GetBlock(addr);
 		if (block)
@@ -359,13 +385,39 @@ void Sh4Recompiler::Init()
 	if (addrspace::virtmemEnabled())
 		verify(&mem_b[0] == ((u8*)getContext()->sq_buffer + sizeof(Sh4Context) + 0x0C000000));
 
-	// Call the platform-specific magic to make the pages RWX
+	aot::beginInit();
 	CodeCache = nullptr;
+	TempCodeCache = nullptr;
+	if (aot::imageOnly() || aot::mode() == aot::Emit)
+	{
+		// No executable code cache. Load and Interp run the image's code once Run() admits it
+		// (aot::admit names its stubs); Emit compiles into plain memory it never runs, and exits.
+#ifdef FEAT_SH4_AOT
+		if (aot::mode() == aot::Emit)
+		{
+			void *p = mmap(nullptr, FULL_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+			verify(p != MAP_FAILED);
+			CodeCache = (u8 *)p;
+			cc_rx_offset = 0;
+			TempCodeCache = CodeCache + CODE_SIZE;
+		}
+#endif
+		sh4Dynarec->init(*getContext(), codeBuffer);
+		bm_ResetCache();
+		return;
+	}
+
+	// Call the platform-specific magic to make the pages RWX. Shape alone among the AOT modes
+	// runs a JIT, for the SH4 only: the other recompilers are denied theirs, as on a device.
+	const bool denied = virtmem::jitDenied();
+	if (aot::mode() == aot::Shape)
+		virtmem::setJitDenied(false);
 #ifdef FEAT_NO_RWX_PAGES
 	bool rc = virtmem::prepare_jit_block(SH4_TCB, FULL_SIZE, (void**)&CodeCache, &cc_rx_offset);
 #else
 	bool rc = virtmem::prepare_jit_block(SH4_TCB, FULL_SIZE, (void**)&CodeCache);
 #endif
+	virtmem::setJitDenied(denied);
 	if (!rc || CodeCache == nullptr)
 	{
 		// The host has no executable memory to give (virtmem::setJitAllocator).
@@ -387,6 +439,13 @@ void Sh4Recompiler::Init()
 void Sh4Recompiler::Term()
 {
 	INFO_LOG(DYNAREC, "Sh4Recompiler::Term");
+#ifdef FEAT_SH4_AOT
+	if (aot::mode() == aot::Emit && CodeCache != nullptr)
+	{
+		munmap(CodeCache, FULL_SIZE);
+		CodeCache = nullptr;
+	}
+#endif
 #ifdef FEAT_NO_RWX_PAGES
 	// (rx, rw), in that order: that is what every release_jit_block() reads, and
 	// CodeCache is the rw alias. Passing them the other way round unmapped the
@@ -405,7 +464,32 @@ void Sh4Recompiler::Term()
 
 bool Sh4Recompiler::hasCodeCache() const
 {
-	return CodeCache != nullptr;
+	return CodeCache != nullptr || aot::imageOnly();
+}
+
+void rdv_DiscardBlockAt(u32 addr)
+{
+	RuntimeBlockInfoPtr block = bm_GetBlock(addr);
+	if (block)
+		bm_DiscardBlock(block.get());
+	Sh4cntx.pc = addr;
+}
+
+void *rdv_CompileAt(RuntimeBlockInfo *rbi, u32 at)
+{
+	codeBuffer.rewindTo(at);
+	sh4Dynarec->compile(rbi, true, false);
+	return (void *)rbi->code;
+}
+
+u8 *rdv_CodeBase()
+{
+	return CodeCache;
+}
+
+u32 rdv_CodeOffset()
+{
+	return codeBuffer.offset();
 }
 
 Sh4Executor *Get_Sh4Recompiler()

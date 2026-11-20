@@ -418,6 +418,18 @@ static void BuildOpcodeTables()
 
 static OnLoad ol_bot(&BuildOpcodeTables);
 
+// The rows OpDesc points into, in source order, and the row of unlisted opcodes: the SH4 AOT
+// import table names the interpreter handlers by row (rec-ARM64/aot_arm64.cpp).
+size_t sh4_opcode_rows(const sh4_opcodelistentry **rows, const sh4_opcodelistentry **missing)
+{
+	size_t n = 0;
+	while (opcodes[n].oph)
+		n++;
+	*rows = opcodes;
+	*missing = &missing_opcode;
+	return n;
+}
+
 static bool strcmp2(const char* &str1_o,const char * str2)
 {
 	u32 sz=0;
